@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoFic Control</title>
+  <link rel="stylesheet" href="popup.css">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>AutoFic</h1>
+      <div class="status-badge" id="statusBadge">Listo</div>
+    </header>
+    <div class="control-group">
+      <label class="switch-label">
+        <span>Estado</span>
+        <label class="switch">
+          <input type="checkbox" id="enabledToggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </label>
+    </div>
+    <div class="control-group">
+      <label class="switch-label">
+        <span>YouTube</span>
+        <label class="switch">
+          <input type="checkbox" id="redirectToggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </label>
+    </div>
+    <div class="settings">
+      <div class="input-group">
+        <label>Mínimo Intervalo (Min:Seg)</label>
+        <div class="time-inputs">
+          <input type="number" id="minMinutes" value="1" min="0" placeholder="Min">
+          <span>:</span>
+          <input type="number" id="minSeconds" value="20" min="0" max="59" placeholder="Seg">
+        </div>
+      </div>
+      <div class="input-group">
+        <label>Máximo Intervalo (Min:Seg)</label>
+        <div class="time-inputs">
+          <input type="number" id="maxMinutes" value="2" min="0" placeholder="Min">
+          <span>:</span>
+          <input type="number" id="maxSeconds" value="20" min="0" max="59" placeholder="Seg">
+        </div>
+      </div>
+      <div class="input-group">
+        <label for="targetDomain">Dominio Objetivo</label>
+        <input type="text" id="targetDomain" placeholder="lat.fictionexpress.com" value="lat.fictionexpress.com">
+      </div>
+    </div>
+    <button id="saveBtn" class="primary-btn">Guardar Configuración</button>
+    <footer>
+      <p>AutoFic v1.0 • por Hack_version</p>
+      <div class="footer-links">
+        <a href="https://www.youtube.com/@hack_version" target="_blank" class="youtube-link-btn">Ver YouTube</a>
+        <a href="https://github.com/Luis000923/AutoFic.git" target="_blank" class="github-link">Ver GitHub</a>
+      </div>
+    </footer>
+  </div>
+  <script src="config.js"></script>
+  <script src="popup.js"></script>
+</body>
+
+</html>

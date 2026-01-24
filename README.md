@@ -11,4 +11,5 @@ Automatiza la navegación en FictionExpress y otros sitios de lectura, simulando
 5. Haz clic en **Cargar descomprimida o puede decir desempaquetado** y selecciona la carpeta descomprimida.
 
 
-si quiere colaborar enviar mensaje a este #correo: storejuegosplay7@gmail.com
+si quiere colaborar enviar mensaje a este
+# correo: storejuegosplay7@gmail.com

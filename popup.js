@@ -6,6 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const maxMinutesInput = document.getElementById('maxMinutes');
     const maxSecondsInput = document.getElementById('maxSeconds');
     const targetDomainInput = document.getElementById('targetDomain');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const questionsBtn = document.getElementById('questionsBtn');
     const saveBtn = document.getElementById('saveBtn');
     const statusBadge = document.getElementById('statusBadge');
 
@@ -76,6 +78,38 @@ document.addEventListener('DOMContentLoaded', () => {
                 saveBtn.textContent = 'Guardar Configuración';
                 saveBtn.style.background = 'linear-gradient(to right, #6366f1, #8b5cf6)';
             }, 2000);
+        });
+    });
+
+    downloadBtn.addEventListener('click', () => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]) {
+                chrome.tabs.sendMessage(tabs[0].id, { type: 'DOWNLOAD_CHAPTER' }).catch(err => {
+                    alert('Error: Por favor, recarga la página del libro para activar la extensión.');
+                    downloadBtn.textContent = 'Recargar Página';
+                    downloadBtn.disabled = false;
+                });
+            }
+        });
+
+        const originalText = downloadBtn.textContent;
+        downloadBtn.textContent = '¡Descargando!';
+        downloadBtn.disabled = true;
+        setTimeout(() => {
+            if (downloadBtn.disabled) {
+                downloadBtn.textContent = originalText;
+                downloadBtn.disabled = false;
+            }
+        }, 2000);
+    });
+
+    questionsBtn.addEventListener('click', () => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]) {
+                chrome.tabs.sendMessage(tabs[0].id, { type: 'SHOW_QUESTIONS' }).catch(err => {
+                    alert('Error: Por favor, recarga la página del libro para activar la extensión.');
+                });
+            }
         });
     });
 

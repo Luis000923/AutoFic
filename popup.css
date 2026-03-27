@@ -184,6 +184,29 @@ input:checked+.slider:before {
   transform: scale(0.98);
 }
 
+.secondary-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--primary);
+  background: transparent;
+  color: var(--text-main);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 10px;
+}
+
+.secondary-btn:hover {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: #8b5cf6;
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 footer {
   margin-top: 24px;
   text-align: center;

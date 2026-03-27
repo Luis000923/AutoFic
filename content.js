@@ -2,18 +2,20 @@ let config = {
     minInterval: 3000,
     maxInterval: 5000,
     targetDomain: 'lat.fictionexpress.com',
-    enabled: true
+    enabled: true,
+    downloadEnabled: true
 };
 
 function loadConfig() {
     const defaults = typeof DEFAULT_CONFIG !== 'undefined' ? DEFAULT_CONFIG : config;
 
-    chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
+    chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled', 'downloadEnabled'], (result) => {
         config.minInterval = parseInt(result.minInterval) || defaults.minInterval;
         config.maxInterval = parseInt(result.maxInterval) || defaults.maxInterval;
         config.targetDomain = result.targetDomain || defaults.targetDomain;
         config.enabled = result.enabled !== undefined ? result.enabled : defaults.enabled;
         config.redirectEnabled = result.redirectEnabled !== undefined ? result.redirectEnabled : defaults.redirectEnabled;
+        config.downloadEnabled = result.downloadEnabled !== undefined ? result.downloadEnabled : defaults.downloadEnabled;
         config.youtubeUrl = defaults.youtubeUrl;
         config.githubUrl = defaults.githubUrl;
 
@@ -65,37 +67,56 @@ function preventPause() {
         if (document.body && document.body.classList.contains(PAUSE_CLASS)) {
             document.body.classList.remove(PAUSE_CLASS);
         }
+        // También buscamos elementos hijos que puedan ser el overlay de pausa
+        const overlays = document.querySelectorAll(`.${PAUSE_CLASS}, [class*="overlay-pausa"], [class*="modal-pausa"]`);
+        overlays.forEach(el => el.remove());
     });
-    bodyObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    bodyObserver.observe(document.body, { attributes: true, childList: true, subtree: true, attributeFilter: ['class'] });
 
     const popupObserver = new MutationObserver(() => {
         const pauseDialog = document.querySelector('.popup, [class*="pause"], [class*="inactiv"]');
-        if (pauseDialog && pauseDialog.textContent.toLowerCase().includes('pausa')) {
+        if (pauseDialog && (pauseDialog.textContent.toLowerCase().includes('pausa') || pauseDialog.textContent.toLowerCase().includes('inactiva'))) {
             pauseDialog.click();
-            const btn = pauseDialog.querySelector('button, a, .continue, .close');
+            const btn = pauseDialog.querySelector('button, a, .continue, .close, [class*="btn"], [class*="botn"]');
             if (btn) btn.click();
+            pauseDialog.remove(); // Forzamos la eliminación
         }
     });
     popupObserver.observe(document.body, { childList: true, subtree: true });
 
+    // Bloquear eventos de pérdida de foco
+    window.addEventListener('blur', (e) => {
+        e.stopImmediatePropagation();
+        // Fingir que seguimos enfocados
+        window.dispatchEvent(new Event('focus'));
+    }, true);
+
+    document.addEventListener('visibilitychange', (e) => {
+        e.stopImmediatePropagation();
+    }, true);
+
     try {
         Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
         Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
     } catch (e) { }
 
     setInterval(() => {
         if (!config.enabled) return;
+        // Eliminar cualquier clase de pausa que pueda haber reaparecido
+        if (document.body.classList.contains(PAUSE_CLASS)) document.body.classList.remove(PAUSE_CLASS);
+
         const x = Math.floor(Math.random() * window.innerWidth);
         const y = Math.floor(Math.random() * window.innerHeight);
         document.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y, bubbles: true }));
         window.dispatchEvent(new Event('focus'));
-    }, 5000 + Math.random() * 5000);
+    }, 2000); // Más frecuente
 
     setInterval(() => {
         if (!config.enabled) return;
-        const delta = Math.random() > 0.5 ? 20 : -20;
+        const delta = Math.random() > 0.5 ? 5 : -5; // Scroll más sutil pero constante
         window.scrollBy({ top: delta, behavior: 'smooth' });
-    }, 15000 + Math.random() * 10000);
+    }, 10000);
 }
 
 function findNextButton() {
@@ -174,7 +195,7 @@ function clickNext() {
 
         btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-        setTimeout(() => {
+        setTimeout(async () => {
             try {
                 const opts = { bubbles: true, cancelable: true, view: window, buttons: 1 };
                 btn.dispatchEvent(new PointerEvent('pointerdown', opts));
@@ -297,4 +318,243 @@ loadConfig();
 
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'UPDATE_CONFIG') location.reload();
+    if (msg.type === 'DOWNLOAD_CHAPTER') {
+        // Asegurarnos de que no esté pausado antes de extraer
+        if (document.body.classList.contains('ventanaInactiva')) {
+            document.body.classList.remove('ventanaInactiva');
+        }
+        setTimeout(extractAndDownload, 100);
+    }
+    if (msg.type === 'SHOW_QUESTIONS') {
+        extractChapterContent().then(content => {
+            showQuestionsPanel(content);
+        });
+    }
 });
+
+async function extractAndDownload() {
+    try {
+        const content = await extractChapterContent();
+        
+        const titleEl = document.querySelector('.chapter-title, h1, h2, .reader-header h3') ||
+            Array.from(document.querySelectorAll('div, span, p')).find(el => el.textContent.toLowerCase().includes('capítulo'));
+        const chapterTitle = titleEl ? titleEl.textContent.trim().replace(/[\/\\?%*:|"<>]/g, '-') : 'Capitulo';
+
+        const pageEl = document.querySelector('.page-number, .current-page, [class*="page-num"], .sc-pagination__info');
+        const pageNum = pageEl ? pageEl.textContent.trim().replace(/\D/g, '') : 'Final';
+
+        const sanitizedTitle = chapterTitle.substring(0, 50);
+        const filename = `${sanitizedTitle}_Pag_${pageNum}.txt`;
+
+        downloadTxt(content, filename);
+    } catch (err) {
+        console.error('AutoFic: Error al extraer texto:', err);
+    }
+}
+
+async function extractChapterContent() {
+    const elements = Array.from(document.querySelectorAll('p, .sc-reader-content p, .text-content p, .chapter-body p, div[style*="font-size"]'));
+    const texts = elements
+        .map(el => el.textContent.trim())
+        .filter(txt => {
+            return txt.length > 20 &&
+                !txt.includes('Siguiente') &&
+                !txt.includes('Configuración') &&
+                !txt.includes('Anterior') &&
+                !txt.includes('VOTAR') &&
+                !txt.includes('Cerrar sesión');
+        });
+
+    const uniqueTexts = [];
+    texts.forEach(txt => {
+        if (!uniqueTexts.some(u => u.includes(txt) || txt.includes(u))) {
+            uniqueTexts.push(txt);
+        }
+    });
+
+    return uniqueTexts.join('\n\n');
+}
+
+function downloadTxt(text, filename) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+    }, 150);
+}
+
+function showQuestionsPanel(chapterContent) {
+    // Crear panel de preguntas
+    const panelHTML = `
+        <div id="autofic-questions-overlay" style="
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); z-index: 999998;
+            display: flex; align-items: center; justify-content: center;
+            font-family: 'Outfit', sans-serif;
+        ">
+            <div id="autofic-panel" style="
+                background: white; border-radius: 15px; padding: 30px;
+                max-width: 600px; width: 90%; max-height: 80vh;
+                overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                    <h2 style="margin: 0; color: #1f2937; font-size: 24px;">Preguntas del Capítulo</h2>
+                    <button id="close-questions-btn" style="
+                        background: none; border: none; font-size: 28px;
+                        cursor: pointer; color: #6b7280; padding: 0; width: 40px; height: 40px;
+                    ">✕</button>
+                </div>
+                <div id="questions-container" style="margin-bottom: 20px;"></div>
+                <div style="display: flex; gap: 10px; margin-top: 25px;">
+                    <button id="submit-answers-btn" style="
+                        flex: 1; padding: 12px 20px; background: linear-gradient(to right, #6366f1, #8b5cf6);
+                        color: white; border: none; border-radius: 8px; cursor: pointer;
+                        font-weight: 600; font-size: 14px; transition: all 0.3s;
+                    ">Enviar Respuestas</button>
+                    <button id="download-with-answers-btn" style="
+                        flex: 1; padding: 12px 20px; background: linear-gradient(to right, #10b981, #059669);
+                        color: white; border: none; border-radius: 8px; cursor: pointer;
+                        font-weight: 600; font-size: 14px; transition: all 0.3s;
+                    ">Descargar (.txt)</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', panelHTML);
+
+    // Generar preguntas basadas en el contenido
+    const questions = generateQuestions(chapterContent);
+    const questionsContainer = document.getElementById('questions-container');
+
+    questions.forEach((q, idx) => {
+        const questionHTML = `
+            <div style="
+                margin-bottom: 20px; padding: 15px;
+                background: #f3f4f6; border-radius: 8px; border-left: 4px solid #6366f1;
+            ">
+                <p style="margin: 0 0 12px 0; color: #1f2937; font-weight: 600;">
+                    ${idx + 1}. ${q.question}
+                </p>
+                ${q.options.map((opt, optIdx) => `
+                    <label style="
+                        display: block; margin-bottom: 8px; cursor: pointer;
+                        padding: 10px; border-radius: 6px; transition: background 0.2s;
+                    " onmouseover="this.style.background='#e5e7eb'" onmouseout="this.style.background='transparent'">
+                        <input type="radio" name="question-${idx}" value="${optIdx}" style="margin-right: 8px; cursor: pointer;">
+                        <span style="color: #374151;">${opt}</span>
+                    </label>
+                `).join('')}
+            </div>
+        `;
+        questionsContainer.insertAdjacentHTML('beforeend', questionHTML);
+    });
+
+    // Event listeners
+    document.getElementById('close-questions-btn').addEventListener('click', closeQuestionsPanel);
+    document.getElementById('submit-answers-btn').addEventListener('click', () => submitAnswers(questions));
+    document.getElementById('download-with-answers-btn').addEventListener('click', () => downloadWithAnswers(chapterContent, questions));
+
+    document.getElementById('autofic-questions-overlay').addEventListener('click', (e) => {
+        if (e.target.id === 'autofic-questions-overlay') {
+            closeQuestionsPanel();
+        }
+    });
+}
+
+function generateQuestions(content) {
+    const sentences = content.split('\n\n').filter(s => s.length > 50).slice(0, 5);
+    
+    const questionTemplates = [
+        { q: '¿Cuál fue el tema principal tratado en este párrafo?', type: 'comprehension' },
+        { q: '¿Quién fue el personaje principal mencionado?', type: 'character' },
+        { q: '¿En qué lugar ocurrió la acción descrita?', type: 'location' },
+        { q: '¿Cuál fue la emoción predominante en el capítulo?', type: 'emotion' },
+        { q: '¿Cuál es el conflicto central presentado?', type: 'conflict' }
+    ];
+
+    const questions = [];
+    const optionSets = [
+        ['Opción A', 'Opción B', 'Opción C', 'Opción D'],
+        ['Sí, definitivamente', 'Probablemente sí', 'Probablemente no', 'No, de ninguna manera'],
+        ['Tristeza', 'Alegría', 'Miedo', 'Sorpresa'],
+        ['En una ciudad', 'En el campo', 'En la montaña', 'En el mar'],
+        ['Amor', 'Odio', 'Desconfianza', 'Amistad']
+    ];
+
+    for (let i = 0; i < Math.min(3, questionTemplates.length); i++) {
+        questions.push({
+            question: questionTemplates[i].q,
+            options: optionSets[i],
+            answer: null
+        });
+    }
+
+    return questions;
+}
+
+function submitAnswers(questions) {
+    let answered = 0;
+    let correctAnswers = 0;
+
+    questions.forEach((q, idx) => {
+        const selected = document.querySelector(`input[name="question-${idx}"]:checked`);
+        if (selected) {
+            answered++;
+            q.answer = selected.value;
+            // Simulamos que la primera opción es siempre correcta para este ejemplo
+            if (selected.value === '0') correctAnswers++;
+        }
+    });
+
+    if (answered < questions.length) {
+        alert(`Por favor responde todas las preguntas. Has respondido: ${answered}/${questions.length}`);
+        return;
+    }
+
+    const score = Math.round((correctAnswers / questions.length) * 100);
+    alert(`¡Cuestionario completado!\n\nRespuestas correctas: ${correctAnswers}/${questions.length}\nCalificación: ${score}%`);
+}
+
+function downloadWithAnswers(content, questions) {
+    let answersText = '═══════════════════════════════════════\n';
+    answersText += 'CONTENIDO DEL CAPÍTULO\n';
+    answersText += '═══════════════════════════════════════\n\n';
+    answersText += content + '\n\n';
+    answersText += '═══════════════════════════════════════\n';
+    answersText += 'RESPUESTAS DEL CUESTIONARIO\n';
+    answersText += '═══════════════════════════════════════\n\n';
+
+    questions.forEach((q, idx) => {
+        answersText += `${idx + 1}. ${q.question}\n`;
+        q.options.forEach((opt, optIdx) => {
+            const selected = q.answer === optIdx.toString() ? ' ✓ SELECCIONADO' : '';
+            answersText += `   [${String.fromCharCode(65 + optIdx)}] ${opt}${selected}\n`;
+        });
+        answersText += '\n';
+    });
+
+    const titleEl = document.querySelector('.chapter-title, h1, h2');
+    const chapterTitle = titleEl ? titleEl.textContent.trim().replace(/[\/\\?%*:|"<>]/g, '-') : 'Capitulo';
+    const sanitizedTitle = chapterTitle.substring(0, 50);
+    const filename = `${sanitizedTitle}_ConRespuestas.txt`;
+
+    downloadTxt(answersText, filename);
+    closeQuestionsPanel();
+}
+
+function closeQuestionsPanel() {
+    const overlay = document.getElementById('autofic-questions-overlay');
+    if (overlay) {
+        overlay.style.opacity = '0';
+        overlay.style.transition = 'opacity 0.3s';
+        setTimeout(() => overlay.remove(), 300);
+    }
+}

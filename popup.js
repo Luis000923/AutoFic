@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     const AUTO_USER_NAME = 'AutoFic';
     const QUIZ_STATE_KEY = 'autoficQuizState';
+    const QUIZ_CONTENT_KEY = 'autoficQuizChapterContent';
 
     // ===== READER TAB ELEMENTS =====
     const enabledToggle = document.getElementById('enabledToggle');
@@ -182,20 +183,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ===== QUIZ TAB LISTENERS =====
-    chapterFile.addEventListener('change', (e) => {
+    chapterFile.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                chapterContent.value = event.target.result;
+            try {
+                const text = await file.text();
+                chapterContent.value = text;
+                persistChapterContent(text);
                 saveQuizState();
-            };
-            reader.readAsText(file);
+                showStatus('Contenido del capítulo cargado y guardado.', 'loading');
+            } catch (_error) {
+                showError('No se pudo leer el archivo .txt');
+            }
         }
     });
 
     chapterContent.addEventListener('input', saveQuizState);
     quizLevel.addEventListener('change', saveQuizState);
+    window.addEventListener('beforeunload', saveQuizState);
 
     solveSingleBtn.addEventListener('click', async () => {
         if (!quizLevel.value) {
@@ -256,7 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 await sendTabMessageWithRetry(tab.id, {
                     type: 'APPLY_QUIZ_ANSWER',
                     answerText: answer.correctAnswer || '',
-                    goNext: true
+                    goNext: false
                 });
 
                 // Mostrar la respuesta en el preview
@@ -299,20 +304,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const resolved = [];
 
         try {
+            const seenQuestions = new Set();
+
             for (let i = 1; i <= 40; i++) {
-                const quizUrl = `${parsed.prefix}${i}${parsed.suffix}`;
-
-                try {
-                    await navigateTab(tab.id, quizUrl);
-                    await delay(800);
-                } catch (_navError) {
-                    break;
-                }
-
                 const questionData = await sendTabMessageWithRetry(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
                 if (!questionData || !questionData.question || !Array.isArray(questionData.options) || questionData.options.length < 2) {
                     break;
                 }
+
+                const questionKey = normalizeText(questionData.question);
+                if (seenQuestions.has(questionKey)) {
+                    break;
+                }
+                seenQuestions.add(questionKey);
 
                 showStatus(`Resolviendo pregunta ${i}...`, 'loading');
                 const result = await resolveQuestionWithApi(questionData, i);
@@ -331,7 +335,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 resolved.push(answer);
                 mergeAndRenderAnswers(resolved);
                 questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
-                await delay(350);
+
+                const moved = await waitForNextQuestion(tab.id, questionData.question);
+                if (!moved) {
+                    showStatus(`Auto detenido: no se detectó siguiente pregunta tras ${resolved.length}.`, 'loading');
+                    break;
+                }
+
+                // Modo automático lento para parecer lectura humana.
+                await delay(2200);
             }
 
             if (resolved.length === 0) {
@@ -347,6 +359,27 @@ document.addEventListener('DOMContentLoaded', () => {
             solveAutoBtn.disabled = false;
             solveSingleBtn.disabled = false;
         }
+    }
+
+    async function waitForNextQuestion(tabId, previousQuestion, timeoutMs = 12000) {
+        const start = Date.now();
+        const previous = normalizeText(previousQuestion || '');
+
+        while (Date.now() - start < timeoutMs) {
+            await delay(600);
+
+            try {
+                const nextData = await sendTabMessageWithRetry(tabId, { type: 'EXTRACT_QUIZ_QUESTION' });
+                const nextQuestion = normalizeText(nextData && nextData.question ? nextData.question : '');
+                if (nextQuestion && nextQuestion !== previous) {
+                    return true;
+                }
+            } catch (_error) {
+                // Si durante transición falla una lectura, reintentar hasta timeout.
+            }
+        }
+
+        return false;
     }
 
     async function resolveQuestionWithApi(questionData, questionNum) {
@@ -422,11 +455,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function saveQuizState() {
+        persistChapterContent(chapterContent.value || '');
+
         const state = {
             level: quizLevel.value || '',
             bookName: quizBookName.value || '',
             chapterName: quizChapterName.value || '',
-            chapterContent: chapterContent.value || '',
+            chapterContent: '',
             questionCount: questionCount.textContent || 'Estado: listo',
             answers: resolvedAnswers,
         };
@@ -435,8 +470,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function restoreQuizState() {
-        chrome.storage.local.get([QUIZ_STATE_KEY], (result) => {
+        const contentFromLocal = localStorage.getItem(QUIZ_CONTENT_KEY) || '';
+        if (contentFromLocal) {
+            chapterContent.value = contentFromLocal;
+        }
+
+        chrome.storage.local.get([QUIZ_STATE_KEY, QUIZ_CONTENT_KEY], (result) => {
             const state = result[QUIZ_STATE_KEY];
+            const contentFromStorage = typeof result[QUIZ_CONTENT_KEY] === 'string' ? result[QUIZ_CONTENT_KEY] : '';
+
+            if (!chapterContent.value && contentFromStorage) {
+                chapterContent.value = contentFromStorage;
+            }
+
             if (!state || typeof state !== 'object') {
                 return;
             }
@@ -444,11 +490,25 @@ document.addEventListener('DOMContentLoaded', () => {
             if (state.level) quizLevel.value = state.level;
             if (state.bookName && !quizBookName.value) quizBookName.value = state.bookName;
             if (state.chapterName && !quizChapterName.value) quizChapterName.value = state.chapterName;
-            if (state.chapterContent) chapterContent.value = state.chapterContent;
+            if (!chapterContent.value && state.chapterContent) chapterContent.value = state.chapterContent;
             if (state.questionCount) questionCount.textContent = state.questionCount;
 
             if (Array.isArray(state.answers) && state.answers.length > 0) {
                 renderAnswersPreview(state.answers);
+            }
+        });
+    }
+
+    function persistChapterContent(content) {
+        try {
+            localStorage.setItem(QUIZ_CONTENT_KEY, content);
+        } catch (_error) {
+            // localStorage puede fallar por cuota; dejamos respaldo en chrome.storage.
+        }
+
+        chrome.storage.local.set({ [QUIZ_CONTENT_KEY]: content }, () => {
+            if (chrome.runtime.lastError) {
+                // Si excede cuota, mantenemos al menos localStorage.
             }
         });
     }

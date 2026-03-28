@@ -405,16 +405,22 @@ function applyQuizAnswer(answerText, goNext = false) {
         }
     }
 
-    if (!bestEl || bestScore < 0.35) {
+    if (!bestEl || bestScore < 0.45) { // Increased strictness
         return false;
     }
 
     const clickable = bestEl.closest('label, button, li, div') || bestEl;
-    clickable.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const ticElement = clickable.querySelector('span.tic') || clickable.querySelector('.tic');
+    const targetEl = ticElement ? ticElement : clickable;
+    
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     try {
-        clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        if (clickable instanceof HTMLInputElement) {
+        targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        if (targetEl instanceof HTMLInputElement) {
+            targetEl.checked = true;
+            targetEl.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (clickable instanceof HTMLInputElement) {
             clickable.checked = true;
             clickable.dispatchEvent(new Event('change', { bubbles: true }));
         }

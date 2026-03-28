@@ -191,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 chapterContent.value = text;
                 persistChapterContent(text);
                 saveQuizState();
-                showStatus('Contenido del capítulo cargado y guardado.', 'loading');
+                showStatus('El txt ya esta en el servidor.', 'loading');
             } catch (_error) {
                 showError('No se pudo leer el archivo .txt');
             }
@@ -248,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const questionNum = questionData.questionNumber || 1;
+            const questionNum = questionData.questionNumber || (resolvedAnswers.length + 1);
             showStatus(`Resolviendo pregunta ${questionNum}...`, 'loading');
 
             const result = await resolveQuestionWithApi(questionData, questionNum);
@@ -427,10 +427,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         answersPreview.innerHTML = answers.map(item => {
-            const confidence = item.confidence ? ` (${item.confidence}%)` : '';
+            const num = item.number || 1;
+            const q = escapeHtml(item.question || '');
+            const a = escapeHtml(item.correctAnswer || '');
             return `<div class="answer-item">
-                <div class="answer-q">${item.number || 1}. ${escapeHtml(item.question || '')}</div>
-                <div class="answer-a">✓ ${escapeHtml(item.correctAnswer || '')}${confidence}</div>
+                <div class="answer-q">${num}. ${q} ${a}</div>
             </div>`;
         }).join('');
 

@@ -37,7 +37,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentContextSignature = '';
     let chapterContentContextSignature = '';
     let pendingFinalizeInfo = null;
-    let autoFinishTriggered = false;
 
     // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
@@ -527,28 +526,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 sessionQuestions,
                 scoreThreshold,
             };
-            showStatus(`Llegaste a ${sessionQuestions} respuestas. Finalizando automáticamente...`, 'loading');
-
-            if (!autoFinishTriggered) {
-                autoFinishTriggered = true;
-                await finishQuizFlow({ autoTriggered: true });
-                return true;
-            }
-
+            showStatus(`Llegaste a ${sessionQuestions} respuestas. Pulsa "Terminar y subir" para ingresar la nota.`, 'loading');
             return false;
         }
 
         if (sessionQuestions > 0) {
             pendingFinalizeInfo = null;
-            autoFinishTriggered = false;
         }
 
         return false;
     }
 
-    async function finishQuizFlow(options = {}) {
-        const autoTriggered = Boolean(options.autoTriggered);
-
+    async function finishQuizFlow() {
         if (!quizLevel.value || !quizBookName.value.trim() || !quizChapterName.value.trim()) {
             showError('Completa contexto del quiz (nivel/libro/capítulo) antes de terminar.');
             return;
@@ -560,27 +549,24 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        let score = null;
+        let detectedScore = null;
         try {
-            score = await extractScoreFromCurrentPage();
+            detectedScore = await extractScoreFromCurrentPage();
         } catch (_error) {
-            score = null;
+            detectedScore = null;
         }
 
-        if (score === null) {
-            const userInput = window.prompt(
-                `Completaste ${info.sessionQuestions} respuestas.\nIngresa tu nota final (0 a 10).\nSi es menor a ${info.scoreThreshold}, se borra y no se publica.`
-            );
+        const promptText = detectedScore === null
+            ? `Completaste ${info.sessionQuestions} respuestas.\nIngresa tu nota final (0 a 10).\nSi es menor a ${info.scoreThreshold}, se borra y no se publica.`
+            : `Completaste ${info.sessionQuestions} respuestas.\nDetecté nota ${detectedScore}/10.\nConfirma o edítala (0 a 10).\nSi es menor a ${info.scoreThreshold}, se borra y no se publica.`;
 
-            if (userInput === null) {
-                showStatus(autoTriggered
-                    ? 'Finalización automática pendiente: falta ingresar nota.'
-                    : 'Finalización cancelada. Pulsa "Terminar y subir" cuando quieras enviar.', 'loading');
-                return;
-            }
-
-            score = Number(String(userInput).replace(',', '.'));
+        const userInput = window.prompt(promptText, detectedScore === null ? '' : String(detectedScore));
+        if (userInput === null) {
+            showStatus('Finalización cancelada. Pulsa "Terminar y subir" cuando quieras enviar.', 'loading');
+            return;
         }
+
+        const score = Number(String(userInput).replace(',', '.'));
 
         if (Number.isNaN(score) || score < 0 || score > 10) {
             showError('Nota inválida. Ingresa un número entre 0 y 10.');
@@ -601,7 +587,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             pendingFinalizeInfo = null;
-            autoFinishTriggered = false;
             await clearQuizData('Sesión publicada correctamente.');
             showSuccess(`✓ Publicado con nota ${finalize.score}/10. El PDF incluye la nota.`);
         } catch (error) {
@@ -800,7 +785,6 @@ document.addEventListener('DOMContentLoaded', () => {
     async function clearQuizData(message = '') {
         resolvedAnswers = [];
         pendingFinalizeInfo = null;
-        autoFinishTriggered = false;
         chapterContent.value = '';
         chapterFile.value = '';
         questionCount.textContent = 'Estado: listo';

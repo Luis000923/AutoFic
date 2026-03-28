@@ -23,7 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const chapterFile = document.getElementById('chapterFile');
     const chapterContent = document.getElementById('chapterContent');
     const questionCount = document.getElementById('questionCount');
-    const captureCurrentBtn = document.getElementById('captureCurrentBtn');
     const captureAllBtn = document.getElementById('captureAllBtn');
     const autoAnswerToggle = document.getElementById('autoAnswerToggle');
     const answersPreview = document.getElementById('answersPreview');
@@ -154,6 +153,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // ===== AUTO-FILL QUIZ INFO FROM URL =====
+    async function autoFillQuizInfo() {
+        const tab = await getActiveTab();
+        if (!tab || !tab.url) return;
+
+        const urlMatch = tab.url.match(/\/libros\/([^\/]+)\/capitulos\/(\d+)-(.+?)\/quiz\//i);
+        if (!urlMatch) return;
+
+        const [_, bookSlug, chapterNum] = urlMatch;
+        
+        if (bookSlug) {
+            const bookName = bookSlug.split('-')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+            quizBookName.value = bookName;
+        }
+
+        if (chapterNum) {
+            quizChapterName.value = 'Capítulo ' + chapterNum;
+        }
+    }
+
+    autoFillQuizInfo();
+
     enabledToggle.addEventListener('change', () => {
         updateBadge(enabledToggle.checked);
     });
@@ -168,14 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             reader.readAsText(file);
         }
-    });
-
-    captureCurrentBtn.addEventListener('click', async () => {
-        const current = await captureCurrentQuestion();
-        if (!current) return;
-        addOrUpdateCapturedQuestion(current);
-        renderAnswersPreview();
-        showStatus('Pregunta actual capturada.', 'loading');
     });
 
     captureAllBtn.addEventListener('click', async () => {
@@ -197,23 +212,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (!quizBookName.value.trim()) {
-            showError('Por favor ingresa el nombre del libro');
-            return;
-        }
-
-        if (!quizChapterName.value.trim()) {
-            showError('Por favor ingresa el nombre del capítulo');
-            return;
-        }
-
         if (!chapterContent.value.trim()) {
-            showError('Por favor carga el contenido del capítulo');
+            showError('Carga o pega el contenido del capítulo para procesar.');
             return;
         }
 
         if (capturedQuestions.length < 1) {
-            showError('Captura al menos una pregunta antes de procesar.');
+            showError('Captura preguntas antes de procesar.');
             return;
         }
 

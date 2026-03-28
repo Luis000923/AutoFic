@@ -91,19 +91,12 @@
 
           <div class="input-group">
             <label for="quizBookName">Nombre del libro</label>
-            <input type="text" id="quizBookName" placeholder="Ej: Tsunami en las Galápagos">
+            <input type="text" id="quizBookName" placeholder="Ej: Tsunami en las Galápagos" readonly>
           </div>
 
           <div class="input-group">
-            <label for="quizChapterName">Número del capítulo (1-5)</label>
-            <select id="quizChapterName">
-              <option value="">Selecciona capítulo...</option>
-              <option value="1">Capítulo 1</option>
-              <option value="2">Capítulo 2</option>
-              <option value="3">Capítulo 3</option>
-              <option value="4">Capítulo 4</option>
-              <option value="5">Capítulo 5</option>
-            </select>
+            <label for="quizChapterName">Número del capítulo</label>
+            <input type="text" id="quizChapterName" placeholder="Capítulo #" readonly>
           </div>
         </div>
 
@@ -118,12 +111,10 @@
         </div>
 
         <div class="form-section">
-          <h3>Preguntas del Quiz (automático)</h3>
-          <p class="help-text">La extensión lee la pregunta y opciones desde la página de quiz actual.</p>
+          <h3>Resolver Quiz (automático)</h3>
 
           <div class="control-group">
-            <button id="captureCurrentBtn" class="secondary-btn">Capturar pregunta actual</button>
-            <button id="captureAllBtn" class="secondary-btn">Capturar y resolver 10 preguntas</button>
+            <button id="captureAllBtn" class="secondary-btn">Resolver y mostrar 10 respuestas</button>
           </div>
 
           <label class="switch-label" style="margin-top: 8px;">
@@ -134,7 +125,7 @@
             </label>
           </label>
 
-          <p id="questionCount" class="help-text">Preguntas capturadas: 0/10</p>
+          <p id="questionCount" class="help-text">Estado: listo</p>
           <div id="answersPreview" class="answers-preview"></div>
         </div>
 

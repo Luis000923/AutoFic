@@ -2,6 +2,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const AUTO_USER_NAME = 'AutoFic';
     const QUIZ_STATE_KEY = 'autoficQuizState';
     const QUIZ_CONTENT_KEY = 'autoficQuizChapterContent';
+    const QUIZ_CONTEXT_KEY = 'autoficQuizContextSignature';
+    const QUIZ_CONTENT_CONTEXT_KEY = 'autoficQuizContentContextSignature';
 
     // ===== READER TAB ELEMENTS =====
     const enabledToggle = document.getElementById('enabledToggle');
@@ -27,9 +29,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const questionCount = document.getElementById('questionCount');
     const solveSingleBtn = document.getElementById('solveSingleBtn');
     const solveAutoBtn = document.getElementById('solveAutoBtn');
+    const clearQuizBtn = document.getElementById('clearQuizBtn');
     const answersPreview = document.getElementById('answersPreview');
     const processingStatus = document.getElementById('processingStatus');
     let resolvedAnswers = [];
+    let currentContextSignature = '';
+    let chapterContentContextSignature = '';
 
     // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
@@ -173,10 +178,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (chapterNum) {
             quizChapterName.value = 'Capítulo ' + chapterNum;
         }
+
+        const newContext = buildContextSignature(quizBookName.value, quizChapterName.value, quizLevel.value);
+        if (newContext) {
+            await enforceContextIsolation(newContext);
+        }
     }
 
-    autoFillQuizInfo();
-    restoreQuizState();
+    (async () => {
+        await restoreQuizState();
+        await autoFillQuizInfo();
+    })();
 
     enabledToggle.addEventListener('change', () => {
         updateBadge(enabledToggle.checked);
@@ -189,7 +201,9 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const text = await file.text();
                 chapterContent.value = text;
-                persistChapterContent(text);
+                const activeSignature = getActiveContextSignature();
+                chapterContentContextSignature = activeSignature;
+                persistChapterContent(text, activeSignature);
                 saveQuizState();
                 showStatus('El txt ya esta en el servidor.', 'loading');
             } catch (_error) {
@@ -198,8 +212,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    chapterContent.addEventListener('input', saveQuizState);
-    quizLevel.addEventListener('change', saveQuizState);
+    chapterContent.addEventListener('input', () => {
+        chapterContentContextSignature = getActiveContextSignature();
+        saveQuizState();
+    });
+
+    quizLevel.addEventListener('change', async () => {
+        const newContext = buildContextSignature(quizBookName.value, quizChapterName.value, quizLevel.value);
+        if (newContext) {
+            await enforceContextIsolation(newContext);
+        }
+        saveQuizState();
+    });
+
+    clearQuizBtn.addEventListener('click', async () => {
+        await clearQuizData('Se limpiaron preguntas y contenido del quiz.');
+    });
+
     window.addEventListener('beforeunload', saveQuizState);
 
     solveSingleBtn.addEventListener('click', async () => {
@@ -210,6 +239,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!chapterContent.value.trim()) {
             showError('Carga el contenido del capítulo antes de continuar.');
+            return;
+        }
+
+        if (!(await ensureContextReadyForSolve())) {
             return;
         }
 
@@ -224,6 +257,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!chapterContent.value.trim()) {
             showError('Carga el contenido del capítulo antes de continuar.');
+            return;
+        }
+
+        if (!(await ensureContextReadyForSolve())) {
             return;
         }
 
@@ -456,7 +493,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function saveQuizState() {
-        persistChapterContent(chapterContent.value || '');
+        const activeSignature = getActiveContextSignature();
+        if (activeSignature) {
+            currentContextSignature = activeSignature;
+        }
+
+        persistChapterContent(chapterContent.value || '', chapterContentContextSignature || activeSignature);
 
         const state = {
             level: quizLevel.value || '',
@@ -465,26 +507,47 @@ document.addEventListener('DOMContentLoaded', () => {
             chapterContent: '',
             questionCount: questionCount.textContent || 'Estado: listo',
             answers: resolvedAnswers,
+            contextSignature: currentContextSignature || activeSignature || '',
+            contentContextSignature: chapterContentContextSignature || activeSignature || '',
         };
 
-        chrome.storage.local.set({ [QUIZ_STATE_KEY]: state });
+        chrome.storage.local.set({
+            [QUIZ_STATE_KEY]: state,
+            [QUIZ_CONTEXT_KEY]: state.contextSignature,
+            [QUIZ_CONTENT_CONTEXT_KEY]: state.contentContextSignature,
+        });
     }
 
     function restoreQuizState() {
+        return new Promise(resolve => {
         const contentFromLocal = localStorage.getItem(QUIZ_CONTENT_KEY) || '';
+        const contentContextFromLocal = localStorage.getItem(QUIZ_CONTENT_CONTEXT_KEY) || '';
         if (contentFromLocal) {
             chapterContent.value = contentFromLocal;
         }
+        if (contentContextFromLocal) {
+            chapterContentContextSignature = contentContextFromLocal;
+        }
 
-        chrome.storage.local.get([QUIZ_STATE_KEY, QUIZ_CONTENT_KEY], (result) => {
+        chrome.storage.local.get([QUIZ_STATE_KEY, QUIZ_CONTENT_KEY, QUIZ_CONTEXT_KEY, QUIZ_CONTENT_CONTEXT_KEY], (result) => {
             const state = result[QUIZ_STATE_KEY];
             const contentFromStorage = typeof result[QUIZ_CONTENT_KEY] === 'string' ? result[QUIZ_CONTENT_KEY] : '';
+            const stateContext = typeof result[QUIZ_CONTEXT_KEY] === 'string' ? result[QUIZ_CONTEXT_KEY] : '';
+            const contentContext = typeof result[QUIZ_CONTENT_CONTEXT_KEY] === 'string' ? result[QUIZ_CONTENT_CONTEXT_KEY] : '';
+
+            if (stateContext) {
+                currentContextSignature = stateContext;
+            }
+            if (contentContext) {
+                chapterContentContextSignature = contentContext;
+            }
 
             if (!chapterContent.value && contentFromStorage) {
                 chapterContent.value = contentFromStorage;
             }
 
             if (!state || typeof state !== 'object') {
+                resolve();
                 return;
             }
 
@@ -497,21 +560,109 @@ document.addEventListener('DOMContentLoaded', () => {
             if (Array.isArray(state.answers) && state.answers.length > 0) {
                 renderAnswersPreview(state.answers);
             }
+
+            if (state && typeof state === 'object') {
+                if (typeof state.contextSignature === 'string' && state.contextSignature) {
+                    currentContextSignature = state.contextSignature;
+                }
+                if (typeof state.contentContextSignature === 'string' && state.contentContextSignature) {
+                    chapterContentContextSignature = state.contentContextSignature;
+                }
+            }
+
+            resolve();
+        });
         });
     }
 
-    function persistChapterContent(content) {
+    function persistChapterContent(content, contentContextSignature = '') {
         try {
             localStorage.setItem(QUIZ_CONTENT_KEY, content);
+            localStorage.setItem(QUIZ_CONTENT_CONTEXT_KEY, contentContextSignature || '');
         } catch (_error) {
             // localStorage puede fallar por cuota; dejamos respaldo en chrome.storage.
         }
 
-        chrome.storage.local.set({ [QUIZ_CONTENT_KEY]: content }, () => {
+        chrome.storage.local.set({
+            [QUIZ_CONTENT_KEY]: content,
+            [QUIZ_CONTENT_CONTEXT_KEY]: contentContextSignature || '',
+        }, () => {
             if (chrome.runtime.lastError) {
                 // Si excede cuota, mantenemos al menos localStorage.
             }
         });
+    }
+
+    async function ensureContextReadyForSolve() {
+        const activeContext = getActiveContextSignature();
+        if (!activeContext) {
+            showError('No se detectó libro/capítulo actual. Abre una página de quiz válida.');
+            return false;
+        }
+
+        if (chapterContentContextSignature !== activeContext) {
+            showError('Detecté cambio de libro/capítulo. Debes limpiar y cargar el contenido correcto antes de resolver.');
+            return false;
+        }
+
+        return true;
+    }
+
+    function buildContextSignature(bookName, chapterName, level) {
+        const book = normalizeText(bookName || '');
+        const chapter = normalizeText(chapterName || '');
+        const lvl = String(level || '').trim();
+
+        if (!book || !chapter) {
+            return '';
+        }
+
+        return `${book}|${chapter}|${lvl || 'sin-nivel'}`;
+    }
+
+    function getActiveContextSignature() {
+        return buildContextSignature(quizBookName.value, quizChapterName.value, quizLevel.value);
+    }
+
+    async function enforceContextIsolation(newContextSignature) {
+        return new Promise(resolve => {
+            chrome.storage.local.get([QUIZ_CONTEXT_KEY], async (result) => {
+                const previousContext = typeof result[QUIZ_CONTEXT_KEY] === 'string' ? result[QUIZ_CONTEXT_KEY] : '';
+
+                if (previousContext && previousContext !== newContextSignature) {
+                    await clearQuizData('Cambio detectado de libro/capítulo. Se limpiaron preguntas y contenido obligatoriamente.');
+                }
+
+                currentContextSignature = newContextSignature;
+                chrome.storage.local.set({ [QUIZ_CONTEXT_KEY]: newContextSignature }, () => resolve());
+            });
+        });
+    }
+
+    async function clearQuizData(message = '') {
+        resolvedAnswers = [];
+        chapterContent.value = '';
+        chapterFile.value = '';
+        questionCount.textContent = 'Estado: listo';
+        answersPreview.innerHTML = '<div class="help-text">Las respuestas aparecerán aquí.</div>';
+        chapterContentContextSignature = '';
+
+        try {
+            localStorage.removeItem(QUIZ_CONTENT_KEY);
+            localStorage.removeItem(QUIZ_CONTENT_CONTEXT_KEY);
+        } catch (_error) {
+            // Ignorar errores de localStorage.
+        }
+
+        await new Promise(resolve => {
+            chrome.storage.local.remove([QUIZ_CONTENT_KEY, QUIZ_CONTENT_CONTEXT_KEY, QUIZ_STATE_KEY], () => resolve());
+        });
+
+        saveQuizState();
+
+        if (message) {
+            showStatus(message, 'loading');
+        }
     }
 
     function parseQuizUrl(url) {

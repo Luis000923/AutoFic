@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chapterContent = document.getElementById('chapterContent');
     const questionCount = document.getElementById('questionCount');
     const solveSingleBtn = document.getElementById('solveSingleBtn');
+    const solveAutoBtn = document.getElementById('solveAutoBtn');
     const answersPreview = document.getElementById('answersPreview');
     const processingStatus = document.getElementById('processingStatus');
 
@@ -203,6 +204,20 @@ document.addEventListener('DOMContentLoaded', () => {
         await resolveSingleQuestion();
     });
 
+    solveAutoBtn.addEventListener('click', async () => {
+        if (!quizLevel.value) {
+            showError('Por favor selecciona un nivel');
+            return;
+        }
+
+        if (!chapterContent.value.trim()) {
+            showError('Carga el contenido del capítulo antes de continuar.');
+            return;
+        }
+
+        await resolveAutomaticQuiz();
+    });
+
     async function resolveSingleQuestion() {
         const tab = await getActiveTab();
         if (!tab || !tab.url) {
@@ -224,41 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const questionNum = questionData.questionNumber || 1;
             showStatus(`Resolviendo pregunta ${questionNum}...`, 'loading');
 
-            const payload = {
-                userName: AUTO_USER_NAME,
-                bookId: 0,
-                chapterId: 0,
-                level: parseInt(quizLevel.value),
-                bookName: quizBookName.value.trim(),
-                chapterName: quizChapterName.value.trim(),
-                chapterContent: chapterContent.value.trim(),
-                questions: [{
-                    question: questionData.question,
-                    options: questionData.options,
-                    questionNumber: questionNum
-                }]
-            };
-
-            const apiUrl = `${DEFAULT_CONFIG.apiBaseUrl}/api/quiz-answer`;
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            // Verificar si la respuesta es JSON válida
-            const contentType = response.headers.get('content-type');
-            if (!contentType || !contentType.includes('application/json')) {
-                showError(`⚠️ Error: Servidor no disponible o retorna HTML\n${apiUrl}`);
-                return;
-            }
-
-            if (!response.ok) {
-                showError(`❌ Error HTTP ${response.status}`);
-                return;
-            }
-
-            const result = await response.json();
+            const result = await resolveQuestionWithApi(questionData, questionNum);
 
             if (result.success && Array.isArray(result.answers) && result.answers.length > 0) {
                 const answer = result.answers[0];
@@ -286,6 +267,111 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             solveSingleBtn.disabled = false;
         }
+    }
+
+    async function resolveAutomaticQuiz() {
+        const tab = await getActiveTab();
+        if (!tab || !tab.url) {
+            showError('No se encontró una pestaña de quiz activa.');
+            return;
+        }
+
+        const parsed = parseQuizUrl(tab.url);
+        if (!parsed) {
+            showError('Abre una URL de quiz con formato .../quiz/1/ para resolver automático.');
+            return;
+        }
+
+        solveAutoBtn.disabled = true;
+        solveSingleBtn.disabled = true;
+        answersPreview.innerHTML = '';
+        showStatus('Iniciando resolución automática...', 'loading');
+
+        const resolved = [];
+
+        try {
+            for (let i = 1; i <= 40; i++) {
+                const quizUrl = `${parsed.prefix}${i}${parsed.suffix}`;
+
+                try {
+                    await navigateTab(tab.id, quizUrl);
+                    await delay(800);
+                } catch (_navError) {
+                    break;
+                }
+
+                const questionData = await sendTabMessageWithRetry(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
+                if (!questionData || !questionData.question || !Array.isArray(questionData.options) || questionData.options.length < 2) {
+                    break;
+                }
+
+                showStatus(`Resolviendo pregunta ${i}...`, 'loading');
+                const result = await resolveQuestionWithApi(questionData, i);
+
+                if (!result.success || !Array.isArray(result.answers) || result.answers.length < 1) {
+                    break;
+                }
+
+                const answer = result.answers[0];
+                await sendTabMessageWithRetry(tab.id, {
+                    type: 'APPLY_QUIZ_ANSWER',
+                    answerText: answer.correctAnswer || ''
+                });
+
+                resolved.push(answer);
+                renderAnswersPreview(resolved);
+                questionCount.textContent = `Estado: resueltas ${resolved.length}`;
+                await delay(350);
+            }
+
+            if (resolved.length === 0) {
+                showError('No se pudieron resolver preguntas automáticamente en esta página.');
+                return;
+            }
+
+            showSuccess(`✓ Auto completado. Resueltas ${resolved.length} preguntas.`);
+        } catch (error) {
+            const msg = String(error && error.message ? error.message : error || 'Error desconocido');
+            showError(`❌ Error automático: ${msg}`);
+        } finally {
+            solveAutoBtn.disabled = false;
+            solveSingleBtn.disabled = false;
+        }
+    }
+
+    async function resolveQuestionWithApi(questionData, questionNum) {
+        const payload = {
+            userName: AUTO_USER_NAME,
+            bookId: 0,
+            chapterId: 0,
+            level: parseInt(quizLevel.value),
+            bookName: quizBookName.value.trim(),
+            chapterName: quizChapterName.value.trim(),
+            chapterContent: chapterContent.value.trim(),
+            questions: [{
+                question: questionData.question,
+                options: (questionData.options || []).slice(0, 3),
+                questionNumber: questionNum
+            }]
+        };
+
+        const apiUrl = `${DEFAULT_CONFIG.apiBaseUrl}/api/quiz-answer`;
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error(`Servidor no disponible o respuesta HTML: ${apiUrl}`);
+        }
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status} en API`);
+        }
+
+        return await response.json();
     }
 
     function renderAnswersPreview(answers = []) {
@@ -360,30 +446,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw error;
             }
 
-            // Recarga la pestaña para que el content script quede activo y reintenta una vez.
-            await reloadTab(tabId);
-            await delay(900);
+            await injectContentScripts(tabId);
+            await delay(300);
             return await sendTabMessage(tabId, msg);
         }
     }
 
-    function reloadTab(tabId) {
+    function injectContentScripts(tabId) {
         return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                chrome.tabs.onUpdated.removeListener(listener);
-                reject(new Error('Timeout recargando pestaña'));
-            }, 15000);
-
-            const listener = (updatedTabId, info) => {
-                if (updatedTabId === tabId && info.status === 'complete') {
-                    clearTimeout(timeout);
-                    chrome.tabs.onUpdated.removeListener(listener);
+            chrome.scripting.executeScript(
+                {
+                    target: { tabId },
+                    files: ['config.js', 'content.js']
+                },
+                () => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                        return;
+                    }
                     resolve();
                 }
-            };
-
-            chrome.tabs.onUpdated.addListener(listener);
-            chrome.tabs.reload(tabId);
+            );
         });
     }
 

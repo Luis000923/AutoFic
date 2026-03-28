@@ -29,12 +29,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const questionCount = document.getElementById('questionCount');
     const solveSingleBtn = document.getElementById('solveSingleBtn');
     const solveAutoBtn = document.getElementById('solveAutoBtn');
+    const finishQuizBtn = document.getElementById('finishQuizBtn');
     const clearQuizBtn = document.getElementById('clearQuizBtn');
     const answersPreview = document.getElementById('answersPreview');
     const processingStatus = document.getElementById('processingStatus');
     let resolvedAnswers = [];
     let currentContextSignature = '';
     let chapterContentContextSignature = '';
+    let pendingFinalizeInfo = null;
 
     // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
@@ -229,6 +231,10 @@ document.addEventListener('DOMContentLoaded', () => {
         await clearQuizData('Se limpiaron preguntas y contenido del quiz.');
     });
 
+    finishQuizBtn.addEventListener('click', async () => {
+        await finishQuizFlow();
+    });
+
     window.addEventListener('beforeunload', saveQuizState);
 
     solveSingleBtn.addEventListener('click', async () => {
@@ -304,11 +310,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Mostrar la respuesta en el preview
                 mergeAndRenderAnswers([answer]);
                 questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
-
-                const finalizeState = await maybeFinalizeByScore(result);
-                if (finalizeState.triggered && !finalizeState.published) {
-                    return;
-                }
+                captureFinalizeRequirement(result);
 
                 showSuccess(`✓ Respuesta marcada: ${answer.correctAnswer}\n\nPuedes continuar al siguiente quiz o usar el botón nuevamente.`);
             } else {
@@ -378,11 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 resolved.push(answer);
                 mergeAndRenderAnswers(resolved);
                 questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
-
-                const finalizeState = await maybeFinalizeByScore(result);
-                if (finalizeState.triggered) {
-                    break;
-                }
+                captureFinalizeRequirement(result);
 
                 const moved = await waitForNextQuestion(tab.id, questionData.question);
                 if (!moved) {
@@ -494,41 +492,74 @@ document.addEventListener('DOMContentLoaded', () => {
         return data;
     }
 
-    async function maybeFinalizeByScore(result) {
+    function captureFinalizeRequirement(result) {
         const sessionQuestions = Number(result && result.sessionQuestions ? result.sessionQuestions : 0);
         const requiresScore = Boolean(result && result.requiresScore);
-        if (!requiresScore || sessionQuestions < 10) {
-            return { triggered: false, published: false };
+        const scoreThreshold = Number(result && result.scoreThreshold ? result.scoreThreshold : 7);
+
+        if (requiresScore && sessionQuestions >= 10) {
+            pendingFinalizeInfo = {
+                sessionQuestions,
+                scoreThreshold,
+            };
+            showStatus(`Llegaste a ${sessionQuestions} respuestas. Pulsa "Terminar y subir" para ingresar la nota.`, 'loading');
+            return;
         }
 
-        const scoreThreshold = Number(result && result.scoreThreshold ? result.scoreThreshold : 7);
+        if (sessionQuestions > 0) {
+            pendingFinalizeInfo = null;
+        }
+    }
+
+    async function finishQuizFlow() {
+        if (!quizLevel.value || !quizBookName.value.trim() || !quizChapterName.value.trim()) {
+            showError('Completa contexto del quiz (nivel/libro/capítulo) antes de terminar.');
+            return;
+        }
+
+        const info = pendingFinalizeInfo;
+        if (!info || Number(info.sessionQuestions || 0) < 10) {
+            showError('Aún no llegas a 10 respuestas. Resuelve más preguntas antes de terminar.');
+            return;
+        }
+
         const userInput = window.prompt(
-            `Llegaste a ${sessionQuestions} respuestas.\nIngresa tu nota final (0 a 10).\nSi es menor a ${scoreThreshold}, se borra y no se publica.`
+            `Completaste ${info.sessionQuestions} respuestas.\nIngresa tu nota final (0 a 10).\nSi es menor a ${info.scoreThreshold}, se borra y no se publica.`
         );
 
         if (userInput === null) {
-            showStatus('Falta registrar la nota para finalizar y publicar.', 'loading');
-            return { triggered: true, published: false };
+            showStatus('Finalización cancelada. Pulsa "Terminar y subir" cuando quieras enviar.', 'loading');
+            return;
         }
 
         const score = Number(String(userInput).replace(',', '.'));
         if (Number.isNaN(score) || score < 0 || score > 10) {
             showError('Nota inválida. Ingresa un número entre 0 y 10.');
-            return { triggered: true, published: false };
+            return;
         }
 
-        showStatus('Validando nota y cerrando envío...', 'loading');
-        const finalize = await finalizeQuizByScore(score);
+        finishQuizBtn.disabled = true;
+        showStatus('Validando nota y finalizando envío...', 'loading');
 
-        if (finalize.deleted) {
-            await clearQuizData('Nota menor a 7: no se subió y se borró el envío.');
-            showError(finalize.message || 'Nota menor a 7: no se subió y se borró el envío.');
-            return { triggered: true, published: false };
+        try {
+            const finalize = await finalizeQuizByScore(score);
+
+            if (finalize.deleted) {
+                pendingFinalizeInfo = null;
+                await clearQuizData('Nota menor a 7: se eliminó la sesión y no se subió.');
+                showError(finalize.message || 'Nota menor a 7: no se subió y se borró el envío.');
+                return;
+            }
+
+            pendingFinalizeInfo = null;
+            await clearQuizData('Sesión publicada correctamente.');
+            showSuccess(`✓ Publicado con nota ${finalize.score}/10. El PDF incluye la nota.`);
+        } catch (error) {
+            const msg = String(error && error.message ? error.message : error || 'Error desconocido');
+            showError(`❌ Error al finalizar: ${msg}`);
+        } finally {
+            finishQuizBtn.disabled = false;
         }
-
-        await clearQuizData('Sesión publicada correctamente.');
-        showSuccess(`✓ Publicado con nota ${finalize.score}/10. El PDF incluye la nota.`);
-        return { triggered: true, published: true };
     }
 
     function renderAnswersPreview(answers = []) {
@@ -718,6 +749,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function clearQuizData(message = '') {
         resolvedAnswers = [];
+        pendingFinalizeInfo = null;
         chapterContent.value = '';
         chapterFile.value = '';
         questionCount.textContent = 'Estado: listo';

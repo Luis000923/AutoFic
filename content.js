@@ -342,7 +342,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
 
     if (msg.type === 'APPLY_QUIZ_ANSWER') {
-        sendResponse({ ok: applyQuizAnswer(msg.answerText || '') });
+        sendResponse({ ok: applyQuizAnswer(msg.answerText || '', Boolean(msg.goNext)) });
         return true;
     }
 });
@@ -382,7 +382,7 @@ function extractQuizQuestion() {
     };
 }
 
-function applyQuizAnswer(answerText) {
+function applyQuizAnswer(answerText, goNext = false) {
     const target = normalizeText(answerText);
     if (!target) return false;
 
@@ -418,9 +418,34 @@ function applyQuizAnswer(answerText) {
             clickable.checked = true;
             clickable.dispatchEvent(new Event('change', { bubbles: true }));
         }
+
+        if (goNext) {
+            setTimeout(clickNextQuizButton, 350);
+        }
+
         return true;
     } catch (e) {
         return false;
+    }
+}
+
+function clickNextQuizButton() {
+    const scope = document.querySelector('#quiz') || document;
+    const buttons = Array.from(scope.querySelectorAll('button[type="submit"], button, .btn'));
+    const nextButton = buttons.find((btn) => {
+        const text = cleanText(btn.textContent || '').toLowerCase();
+        return text === 'siguiente' || text.includes('siguiente') || text.includes('continuar');
+    });
+
+    if (!nextButton) {
+        return;
+    }
+
+    try {
+        nextButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        nextButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    } catch (_e) {
+        // no-op
     }
 }
 

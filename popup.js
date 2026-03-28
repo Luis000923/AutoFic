@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     const AUTO_USER_NAME = 'AutoFic';
+    const QUIZ_STATE_KEY = 'autoficQuizState';
 
     // ===== READER TAB ELEMENTS =====
     const enabledToggle = document.getElementById('enabledToggle');
@@ -27,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const solveAutoBtn = document.getElementById('solveAutoBtn');
     const answersPreview = document.getElementById('answersPreview');
     const processingStatus = document.getElementById('processingStatus');
+    let resolvedAnswers = [];
 
     // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
@@ -173,6 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     autoFillQuizInfo();
+    restoreQuizState();
 
     enabledToggle.addEventListener('change', () => {
         updateBadge(enabledToggle.checked);
@@ -185,10 +188,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const reader = new FileReader();
             reader.onload = (event) => {
                 chapterContent.value = event.target.result;
+                saveQuizState();
             };
             reader.readAsText(file);
         }
     });
+
+    chapterContent.addEventListener('input', saveQuizState);
+    quizLevel.addEventListener('change', saveQuizState);
 
     solveSingleBtn.addEventListener('click', async () => {
         if (!quizLevel.value) {
@@ -248,11 +255,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 showStatus('Marcando respuesta correcta...', 'loading');
                 await sendTabMessageWithRetry(tab.id, {
                     type: 'APPLY_QUIZ_ANSWER',
-                    answerText: answer.correctAnswer || ''
+                    answerText: answer.correctAnswer || '',
+                    goNext: true
                 });
 
                 // Mostrar la respuesta en el preview
-                renderAnswersPreview([answer]);
+                mergeAndRenderAnswers([answer]);
+                questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
                 showSuccess(`✓ Respuesta marcada: ${answer.correctAnswer}\n\nPuedes continuar al siguiente quiz o usar el botón nuevamente.`);
             } else {
                 showError('El servidor no encontró una respuesta válida para esta pregunta.');
@@ -315,12 +324,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const answer = result.answers[0];
                 await sendTabMessageWithRetry(tab.id, {
                     type: 'APPLY_QUIZ_ANSWER',
-                    answerText: answer.correctAnswer || ''
+                    answerText: answer.correctAnswer || '',
+                    goNext: true
                 });
 
                 resolved.push(answer);
-                renderAnswersPreview(resolved);
-                questionCount.textContent = `Estado: resueltas ${resolved.length}`;
+                mergeAndRenderAnswers(resolved);
+                questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
                 await delay(350);
             }
 
@@ -375,8 +385,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderAnswersPreview(answers = []) {
+        resolvedAnswers = Array.isArray(answers) ? answers : [];
+
         if (answers.length === 0) {
             answersPreview.innerHTML = '<div class="help-text">Las respuestas aparecerán aquí.</div>';
+            saveQuizState();
             return;
         }
 
@@ -387,6 +400,57 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="answer-a">✓ ${escapeHtml(item.correctAnswer || '')}${confidence}</div>
             </div>`;
         }).join('');
+
+        saveQuizState();
+    }
+
+    function mergeAndRenderAnswers(newItems) {
+        const map = new Map();
+
+        for (const item of resolvedAnswers) {
+            const key = `${item.number || ''}|${item.question || ''}`;
+            map.set(key, item);
+        }
+
+        for (const item of newItems || []) {
+            const key = `${item.number || ''}|${item.question || ''}`;
+            map.set(key, item);
+        }
+
+        const merged = Array.from(map.values()).sort((a, b) => Number(a.number || 0) - Number(b.number || 0));
+        renderAnswersPreview(merged);
+    }
+
+    function saveQuizState() {
+        const state = {
+            level: quizLevel.value || '',
+            bookName: quizBookName.value || '',
+            chapterName: quizChapterName.value || '',
+            chapterContent: chapterContent.value || '',
+            questionCount: questionCount.textContent || 'Estado: listo',
+            answers: resolvedAnswers,
+        };
+
+        chrome.storage.local.set({ [QUIZ_STATE_KEY]: state });
+    }
+
+    function restoreQuizState() {
+        chrome.storage.local.get([QUIZ_STATE_KEY], (result) => {
+            const state = result[QUIZ_STATE_KEY];
+            if (!state || typeof state !== 'object') {
+                return;
+            }
+
+            if (state.level) quizLevel.value = state.level;
+            if (state.bookName && !quizBookName.value) quizBookName.value = state.bookName;
+            if (state.chapterName && !quizChapterName.value) quizChapterName.value = state.chapterName;
+            if (state.chapterContent) chapterContent.value = state.chapterContent;
+            if (state.questionCount) questionCount.textContent = state.questionCount;
+
+            if (Array.isArray(state.answers) && state.answers.length > 0) {
+                renderAnswersPreview(state.answers);
+            }
+        });
     }
 
     function parseQuizUrl(url) {

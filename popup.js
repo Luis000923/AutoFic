@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const AUTO_USER_NAME = 'AutoFic';
+
     // ===== READER TAB ELEMENTS =====
     const enabledToggle = document.getElementById('enabledToggle');
     const redirectToggle = document.getElementById('redirectToggle');
@@ -15,7 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // ===== QUIZ TAB ELEMENTS =====
     const tabBtns = document.querySelectorAll('.tab-btn');
     const tabContents = document.querySelectorAll('.tab-content');
-    const quizUserName = document.getElementById('quizUserName');
     const quizLevel = document.getElementById('quizLevel');
     const quizBookName = document.getElementById('quizBookName');
     const quizChapterName = document.getElementById('quizChapterName');
@@ -174,11 +175,6 @@ document.addEventListener('DOMContentLoaded', () => {
         processingStatus.className = '';
 
         // Validaciones
-        if (!quizUserName.value.trim()) {
-            showError('Por favor ingresa tu nombre');
-            return;
-        }
-
         if (!quizLevel.value) {
             showError('Por favor selecciona un nivel');
             return;
@@ -255,12 +251,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const payload = {
-                userName: quizUserName.value.trim(),
+                userName: AUTO_USER_NAME,
                 bookId: 0,
                 chapterId: 0,
                 level: parseInt(quizLevel.value),
                 bookName: quizBookName.value.trim(),
-                chapterName: quizChapterName.value.trim(),
+                chapterName: `Capítulo ${quizChapterName.value}`,
                 chapterContent: chapterContent.value.trim(),
                 questions: questions
             };
@@ -279,7 +275,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 showSuccess(`✓ Quiz procesado correctamente!\n\nSiguiente paso: Sube el PDF en\nhttps://free-quiz.varios.store/apoyar-con-quiz`);
                 // Limpiar formulario
                 setTimeout(() => {
-                    quizUserName.value = '';
                     quizLevel.value = '';
                     quizBookName.value = '';
                     quizChapterName.value = '';

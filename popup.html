@@ -78,11 +78,6 @@
       <div class="quiz-form">
         <div class="form-section">
           <h3>Información del Quiz</h3>
-          
-          <div class="input-group">
-            <label for="quizUserName">Tu nombre</label>
-            <input type="text" id="quizUserName" placeholder="Tu nombre o alias">
-          </div>
 
           <div class="input-group">
             <label for="quizLevel">Nivel del libro (1-3)</label>
@@ -100,8 +95,15 @@
           </div>
 
           <div class="input-group">
-            <label for="quizChapterName">Nombre del capítulo</label>
-            <input type="text" id="quizChapterName" placeholder="Ej: El fin de la aventura">
+            <label for="quizChapterName">Número del capítulo (1-5)</label>
+            <select id="quizChapterName">
+              <option value="">Selecciona capítulo...</option>
+              <option value="1">Capítulo 1</option>
+              <option value="2">Capítulo 2</option>
+              <option value="3">Capítulo 3</option>
+              <option value="4">Capítulo 4</option>
+              <option value="5">Capítulo 5</option>
+            </select>
           </div>
         </div>
 

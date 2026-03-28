@@ -258,11 +258,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
 
                 try {
-                    const response = await fetch('https://free-quiz.varios.store/api/quiz-answer', {
+                    const apiUrl = `${DEFAULT_CONFIG.apiBaseUrl}/api/quiz-answer`;
+                    const response = await fetch(apiUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
+
+                    // Verificar si la respuesta es JSON válida
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        showError(`⚠️ Servidor no disponible:\n${apiUrl}\n(Respuesta no JSON)`);
+                        break;
+                    }
+
+                    if (!response.ok) {
+                        showError(`❌ Error HTTP ${response.status}\nServidor: ${apiUrl}`);
+                        break;
+                    }
 
                     const result = await response.json();
 
@@ -278,11 +291,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         await delay(500);
                         questionNum++;
                     } else {
-                        showError('Error al procesar pregunta ' + questionNum);
+                        showError('❌ El servidor no encontró respuesta para pregunta ' + questionNum);
                         break;
                     }
                 } catch (fetchError) {
-                    showError('Error de conexión en pregunta ' + questionNum);
+                    showError(`❌ Error de conexión:\n${fetchError.message}`);
                     break;
                 }
             }

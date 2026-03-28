@@ -304,6 +304,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Mostrar la respuesta en el preview
                 mergeAndRenderAnswers([answer]);
                 questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
+
+                const finalizeState = await maybeFinalizeByScore(result);
+                if (finalizeState.triggered && !finalizeState.published) {
+                    return;
+                }
+
                 showSuccess(`✓ Respuesta marcada: ${answer.correctAnswer}\n\nPuedes continuar al siguiente quiz o usar el botón nuevamente.`);
             } else {
                 showError('El servidor no encontró una respuesta válida para esta pregunta.');
@@ -372,6 +378,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 resolved.push(answer);
                 mergeAndRenderAnswers(resolved);
                 questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
+
+                const finalizeState = await maybeFinalizeByScore(result);
+                if (finalizeState.triggered) {
+                    break;
+                }
 
                 const moved = await waitForNextQuestion(tab.id, questionData.question);
                 if (!moved) {
@@ -452,6 +463,72 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         return await response.json();
+    }
+
+    async function finalizeQuizByScore(score) {
+        const payload = {
+            userName: AUTO_USER_NAME,
+            level: parseInt(quizLevel.value),
+            bookName: quizBookName.value.trim(),
+            chapterName: quizChapterName.value.trim(),
+            score
+        };
+
+        const apiUrl = `${DEFAULT_CONFIG.apiBaseUrl}/api/quiz-finalize`;
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error(`Servidor no disponible o respuesta HTML: ${apiUrl}`);
+        }
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || `HTTP ${response.status} en API finalize`);
+        }
+
+        return data;
+    }
+
+    async function maybeFinalizeByScore(result) {
+        const sessionQuestions = Number(result && result.sessionQuestions ? result.sessionQuestions : 0);
+        const requiresScore = Boolean(result && result.requiresScore);
+        if (!requiresScore || sessionQuestions < 10) {
+            return { triggered: false, published: false };
+        }
+
+        const scoreThreshold = Number(result && result.scoreThreshold ? result.scoreThreshold : 7);
+        const userInput = window.prompt(
+            `Llegaste a ${sessionQuestions} respuestas.\nIngresa tu nota final (0 a 10).\nSi es menor a ${scoreThreshold}, se borra y no se publica.`
+        );
+
+        if (userInput === null) {
+            showStatus('Falta registrar la nota para finalizar y publicar.', 'loading');
+            return { triggered: true, published: false };
+        }
+
+        const score = Number(String(userInput).replace(',', '.'));
+        if (Number.isNaN(score) || score < 0 || score > 10) {
+            showError('Nota inválida. Ingresa un número entre 0 y 10.');
+            return { triggered: true, published: false };
+        }
+
+        showStatus('Validando nota y cerrando envío...', 'loading');
+        const finalize = await finalizeQuizByScore(score);
+
+        if (finalize.deleted) {
+            await clearQuizData('Nota menor a 7: no se subió y se borró el envío.');
+            showError(finalize.message || 'Nota menor a 7: no se subió y se borró el envío.');
+            return { triggered: true, published: false };
+        }
+
+        await clearQuizData('Sesión publicada correctamente.');
+        showSuccess(`✓ Publicado con nota ${finalize.score}/10. El PDF incluye la nota.`);
+        return { triggered: true, published: true };
     }
 
     function renderAnswersPreview(answers = []) {

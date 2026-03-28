@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chapterFile = document.getElementById('chapterFile');
     const chapterContent = document.getElementById('chapterContent');
     const questionCount = document.getElementById('questionCount');
-    const captureAllBtn = document.getElementById('captureAllBtn');
+    const solveSingleBtn = document.getElementById('solveSingleBtn');
     const answersPreview = document.getElementById('answersPreview');
     const processingStatus = document.getElementById('processingStatus');
 
@@ -189,143 +189,111 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    captureAllBtn.addEventListener('click', async () => {
+    solveSingleBtn.addEventListener('click', async () => {
         if (!quizLevel.value) {
             showError('Por favor selecciona un nivel');
             return;
         }
 
-        await captureAndResolveAllQuestions();
+        if (!chapterContent.value.trim()) {
+            showError('Carga el contenido del capítulo antes de continuar.');
+            return;
+        }
+
+        await resolveSingleQuestion();
     });
 
-    async function captureAndResolveAllQuestions() {
+    async function resolveSingleQuestion() {
         const tab = await getActiveTab();
         if (!tab || !tab.url) {
             showError('No se encontró una pestaña de quiz activa.');
             return;
         }
 
-        const parsed = parseQuizUrl(tab.url);
-        if (!parsed) {
-            showError('Abre una URL de quiz con formato .../quiz/1/ antes de iniciar.');
-            return;
-        }
-
-        if (!chapterContent.value.trim()) {
-            showError('Carga el contenido del capítulo antes de iniciar.');
-            return;
-        }
-
-        captureAllBtn.disabled = true;
-        answersPreview.innerHTML = '';
-        showStatus('Iniciando resolución automática...', 'loading');
+        solveSingleBtn.disabled = true;
+        showStatus('Extrayendo pregunta...', 'loading');
 
         try {
-            let questionNum = 1;
-            const resolvedAnswers = [];
-
-            while (true) {
-                const quizUrl = `${parsed.prefix}${questionNum}${parsed.suffix}`;
-                
-                try {
-                    await navigateTab(tab.id, quizUrl);
-                    await delay(700);
-                } catch (navError) {
-                    break;
-                }
-
-                const questionData = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
-                if (!questionData || !questionData.question || !Array.isArray(questionData.options) || questionData.options.length < 2) {
-                    showStatus(`✓ Resolución completada. Se procesaron ${questionNum - 1} preguntas.`, 'success');
-                    break;
-                }
-
-                showStatus(`Procesando pregunta ${questionNum}...`, 'loading');
-
-                const payload = {
-                    userName: AUTO_USER_NAME,
-                    bookId: 0,
-                    chapterId: 0,
-                    level: parseInt(quizLevel.value),
-                    bookName: quizBookName.value.trim(),
-                    chapterName: quizChapterName.value.trim(),
-                    chapterContent: chapterContent.value.trim(),
-                    questions: [{
-                        question: questionData.question,
-                        options: questionData.options,
-                        questionNumber: questionNum
-                    }]
-                };
-
-                try {
-                    const apiUrl = `${DEFAULT_CONFIG.apiBaseUrl}/api/quiz-answer`;
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    // Verificar si la respuesta es JSON válida
-                    const contentType = response.headers.get('content-type');
-                    if (!contentType || !contentType.includes('application/json')) {
-                        showError(`⚠️ Servidor no disponible:\n${apiUrl}\n(Respuesta no JSON)`);
-                        break;
-                    }
-
-                    if (!response.ok) {
-                        showError(`❌ Error HTTP ${response.status}\nServidor: ${apiUrl}`);
-                        break;
-                    }
-
-                    const result = await response.json();
-
-                    if (result.success && Array.isArray(result.answers) && result.answers.length > 0) {
-                        const answer = result.answers[0];
-                        resolvedAnswers.push(answer);
-
-                        await sendTabMessage(tab.id, {
-                            type: 'APPLY_QUIZ_ANSWER',
-                            answerText: answer.correctAnswer || ''
-                        });
-
-                        await delay(500);
-                        questionNum++;
-                    } else {
-                        showError('❌ El servidor no encontró respuesta para pregunta ' + questionNum);
-                        break;
-                    }
-                } catch (fetchError) {
-                    showError(`❌ Error de conexión:\n${fetchError.message}`);
-                    break;
-                }
+            // Extrae la pregunta actual
+            const questionData = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
+            if (!questionData || !questionData.question || !Array.isArray(questionData.options) || questionData.options.length < 2) {
+                showError('No se pudo leer la pregunta. Asegúrate de estar en una página de quiz válida.');
+                return;
             }
 
-            if (resolvedAnswers.length > 0) {
-                renderAnswersPreview(resolvedAnswers);
+            const questionNum = questionData.questionNumber || 1;
+            showStatus(`Resolviendo pregunta ${questionNum}...`, 'loading');
+
+            const payload = {
+                userName: AUTO_USER_NAME,
+                bookId: 0,
+                chapterId: 0,
+                level: parseInt(quizLevel.value),
+                bookName: quizBookName.value.trim(),
+                chapterName: quizChapterName.value.trim(),
+                chapterContent: chapterContent.value.trim(),
+                questions: [{
+                    question: questionData.question,
+                    options: questionData.options,
+                    questionNumber: questionNum
+                }]
+            };
+
+            const apiUrl = `${DEFAULT_CONFIG.apiBaseUrl}/api/quiz-answer`;
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            // Verificar si la respuesta es JSON válida
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                showError(`⚠️ Error: Servidor no disponible o retorna HTML\n${apiUrl}`);
+                return;
+            }
+
+            if (!response.ok) {
+                showError(`❌ Error HTTP ${response.status}`);
+                return;
+            }
+
+            const result = await response.json();
+
+            if (result.success && Array.isArray(result.answers) && result.answers.length > 0) {
+                const answer = result.answers[0];
+                
+                // Aplicar la respuesta en el quiz actual (sin navegar)
+                showStatus('Marcando respuesta correcta...', 'loading');
+                await sendTabMessage(tab.id, {
+                    type: 'APPLY_QUIZ_ANSWER',
+                    answerText: answer.correctAnswer || ''
+                });
+
+                // Mostrar la respuesta en el preview
+                renderAnswersPreview([answer]);
+                showSuccess(`✓ Respuesta marcada: ${answer.correctAnswer}\n\nPuedes continuar al siguiente quiz o usar el botón nuevamente.`);
+            } else {
+                showError('El servidor no encontró una respuesta válida para esta pregunta.');
             }
         } catch (error) {
-            showError('Error durante la resolución automática.');
+            showError(`❌ Error: ${error.message}`);
         } finally {
-            captureAllBtn.disabled = false;
+            solveSingleBtn.disabled = false;
         }
     }
 
     function renderAnswersPreview(answers = []) {
-        const items = answers.length > 0 ? answers : capturedQuestions.map((q, i) => ({
-            number: q.questionNumber || (i + 1),
-            question: q.question,
-            correctAnswer: '(pendiente de resolver)'
-        }));
-
-        if (items.length === 0) {
-            answersPreview.innerHTML = '<div class="help-text">Aquí se mostrarán las respuestas correctas por pregunta.</div>';
+        if (answers.length === 0) {
+            answersPreview.innerHTML = '<div class="help-text">Las respuestas aparecerán aquí.</div>';
             return;
         }
 
-        answersPreview.innerHTML = items.map(item => {
+        answersPreview.innerHTML = answers.map(item => {
+            const confidence = item.confidence ? ` (${item.confidence}%)` : '';
             return `<div class="answer-item">
-                <div class="answer-q">${item.number}. ${escapeHtml(item.question || '')}</div>
-                <div class="answer-a">${escapeHtml(item.correctAnswer || '')}</div>
+                <div class="answer-q">${item.number || 1}. ${escapeHtml(item.question || '')}</div>
+                <div class="answer-a">✓ ${escapeHtml(item.correctAnswer || '')}${confidence}</div>
             </div>`;
         }).join('');
     }

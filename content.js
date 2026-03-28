@@ -341,6 +341,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return true;
     }
 
+    if (msg.type === 'EXTRACT_QUIZ_CONTEXT') {
+        sendResponse(extractQuizContext());
+        return true;
+    }
+
+    if (msg.type === 'EXTRACT_QUIZ_SCORE') {
+        sendResponse(extractQuizScore());
+        return true;
+    }
+
     if (msg.type === 'APPLY_QUIZ_ANSWER') {
         sendResponse({ ok: applyQuizAnswer(msg.answerText || '', Boolean(msg.goNext)) });
         return true;
@@ -379,6 +389,54 @@ function extractQuizQuestion() {
         question,
         options: filtered,
         questionNumber: urlMatch ? parseInt(urlMatch[1], 10) : null,
+    };
+}
+
+function extractQuizContext() {
+    const fullText = cleanText(document.body ? document.body.innerText || '' : '');
+
+    let level = null;
+
+    const levelEl = document.querySelector('.icoLevel, [class*="icoLevel"], [class*="level"]');
+    const levelText = cleanText((levelEl && levelEl.textContent) || fullText);
+    const levelMatch = levelText.match(/nivel\s*(\d)/i);
+    if (levelMatch) {
+        level = parseInt(levelMatch[1], 10);
+    }
+
+    const chapterEl = document.querySelector('.capitulo, [class*="capitulo"], .sentulo, [class*="titulo"]');
+    const chapterName = cleanText(chapterEl ? chapterEl.textContent || '' : '');
+
+    return {
+        level: Number.isInteger(level) ? level : null,
+        chapterName: chapterName || null,
+        url: window.location.href,
+    };
+}
+
+function extractQuizScore() {
+    const fullText = cleanText(document.body ? document.body.innerText || '' : '');
+
+    const strongEl = document.querySelector('h3 strong, h2 strong, [class*="nota"] strong');
+    const strongText = cleanText(strongEl ? strongEl.textContent || '' : '');
+    const baseText = `${strongText} ${fullText}`;
+
+    const scoreMatch = baseText.match(/nota\s+del\s+quiz\s*:?\s*([0-9]+(?:[\.,][0-9]+)?)\s*\/\s*10/i)
+        || baseText.match(/([0-9]+(?:[\.,][0-9]+)?)\s*\/\s*10/);
+
+    if (!scoreMatch) {
+        return { score: null, maxScore: 10, found: false };
+    }
+
+    const score = Number(String(scoreMatch[1]).replace(',', '.'));
+    if (Number.isNaN(score)) {
+        return { score: null, maxScore: 10, found: false };
+    }
+
+    return {
+        score,
+        maxScore: 10,
+        found: true,
     };
 }
 

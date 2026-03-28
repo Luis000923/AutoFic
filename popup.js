@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentContextSignature = '';
     let chapterContentContextSignature = '';
     let pendingFinalizeInfo = null;
+    let autoFinishTriggered = false;
 
     // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
@@ -181,6 +182,8 @@ document.addEventListener('DOMContentLoaded', () => {
             quizChapterName.value = 'Capítulo ' + chapterNum;
         }
 
+        await autoFillQuizMetadataFromPage(tab.id);
+
         const newContext = buildContextSignature(quizBookName.value, quizChapterName.value, quizLevel.value);
         if (newContext) {
             await enforceContextIsolation(newContext);
@@ -239,6 +242,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     solveSingleBtn.addEventListener('click', async () => {
         if (!quizLevel.value) {
+            const tab = await getActiveTab();
+            if (tab && tab.id) {
+                await autoFillQuizMetadataFromPage(tab.id);
+            }
+        }
+
+        if (!quizLevel.value) {
             showError('Por favor selecciona un nivel');
             return;
         }
@@ -256,6 +266,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     solveAutoBtn.addEventListener('click', async () => {
+        if (!quizLevel.value) {
+            const tab = await getActiveTab();
+            if (tab && tab.id) {
+                await autoFillQuizMetadataFromPage(tab.id);
+            }
+        }
+
         if (!quizLevel.value) {
             showError('Por favor selecciona un nivel');
             return;
@@ -310,7 +327,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Mostrar la respuesta en el preview
                 mergeAndRenderAnswers([answer]);
                 questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
-                captureFinalizeRequirement(result);
+
+                const autoFinished = await captureFinalizeRequirement(result);
+                if (autoFinished) {
+                    return;
+                }
 
                 showSuccess(`✓ Respuesta marcada: ${answer.correctAnswer}\n\nPuedes continuar al siguiente quiz o usar el botón nuevamente.`);
             } else {
@@ -380,7 +401,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 resolved.push(answer);
                 mergeAndRenderAnswers(resolved);
                 questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
-                captureFinalizeRequirement(result);
+
+                const autoFinished = await captureFinalizeRequirement(result);
+                if (autoFinished) {
+                    break;
+                }
 
                 const moved = await waitForNextQuestion(tab.id, questionData.question);
                 if (!moved) {
@@ -492,7 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return data;
     }
 
-    function captureFinalizeRequirement(result) {
+    async function captureFinalizeRequirement(result) {
         const sessionQuestions = Number(result && result.sessionQuestions ? result.sessionQuestions : 0);
         const requiresScore = Boolean(result && result.requiresScore);
         const scoreThreshold = Number(result && result.scoreThreshold ? result.scoreThreshold : 7);
@@ -502,16 +527,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 sessionQuestions,
                 scoreThreshold,
             };
-            showStatus(`Llegaste a ${sessionQuestions} respuestas. Pulsa "Terminar y subir" para ingresar la nota.`, 'loading');
-            return;
+            showStatus(`Llegaste a ${sessionQuestions} respuestas. Finalizando automáticamente...`, 'loading');
+
+            if (!autoFinishTriggered) {
+                autoFinishTriggered = true;
+                await finishQuizFlow({ autoTriggered: true });
+                return true;
+            }
+
+            return false;
         }
 
         if (sessionQuestions > 0) {
             pendingFinalizeInfo = null;
+            autoFinishTriggered = false;
         }
+
+        return false;
     }
 
-    async function finishQuizFlow() {
+    async function finishQuizFlow(options = {}) {
+        const autoTriggered = Boolean(options.autoTriggered);
+
         if (!quizLevel.value || !quizBookName.value.trim() || !quizChapterName.value.trim()) {
             showError('Completa contexto del quiz (nivel/libro/capítulo) antes de terminar.');
             return;
@@ -523,16 +560,28 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const userInput = window.prompt(
-            `Completaste ${info.sessionQuestions} respuestas.\nIngresa tu nota final (0 a 10).\nSi es menor a ${info.scoreThreshold}, se borra y no se publica.`
-        );
-
-        if (userInput === null) {
-            showStatus('Finalización cancelada. Pulsa "Terminar y subir" cuando quieras enviar.', 'loading');
-            return;
+        let score = null;
+        try {
+            score = await extractScoreFromCurrentPage();
+        } catch (_error) {
+            score = null;
         }
 
-        const score = Number(String(userInput).replace(',', '.'));
+        if (score === null) {
+            const userInput = window.prompt(
+                `Completaste ${info.sessionQuestions} respuestas.\nIngresa tu nota final (0 a 10).\nSi es menor a ${info.scoreThreshold}, se borra y no se publica.`
+            );
+
+            if (userInput === null) {
+                showStatus(autoTriggered
+                    ? 'Finalización automática pendiente: falta ingresar nota.'
+                    : 'Finalización cancelada. Pulsa "Terminar y subir" cuando quieras enviar.', 'loading');
+                return;
+            }
+
+            score = Number(String(userInput).replace(',', '.'));
+        }
+
         if (Number.isNaN(score) || score < 0 || score > 10) {
             showError('Nota inválida. Ingresa un número entre 0 y 10.');
             return;
@@ -552,6 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             pendingFinalizeInfo = null;
+            autoFinishTriggered = false;
             await clearQuizData('Sesión publicada correctamente.');
             showSuccess(`✓ Publicado con nota ${finalize.score}/10. El PDF incluye la nota.`);
         } catch (error) {
@@ -750,6 +800,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function clearQuizData(message = '') {
         resolvedAnswers = [];
         pendingFinalizeInfo = null;
+        autoFinishTriggered = false;
         chapterContent.value = '';
         chapterFile.value = '';
         questionCount.textContent = 'Estado: listo';
@@ -892,5 +943,43 @@ document.addEventListener('DOMContentLoaded', () => {
     function showStatus(message, type) {
         processingStatus.textContent = message;
         processingStatus.className = type;
+    }
+
+    async function autoFillQuizMetadataFromPage(tabId) {
+        try {
+            const data = await sendTabMessageWithRetry(tabId, { type: 'EXTRACT_QUIZ_CONTEXT' });
+            if (!data || typeof data !== 'object') {
+                return;
+            }
+
+            if (!quizLevel.value && Number(data.level) >= 1 && Number(data.level) <= 3) {
+                quizLevel.value = String(Number(data.level));
+            }
+
+            if (!quizChapterName.value && data.chapterName) {
+                quizChapterName.value = String(data.chapterName);
+            }
+        } catch (_error) {
+            // no-op
+        }
+    }
+
+    async function extractScoreFromCurrentPage() {
+        const tab = await getActiveTab();
+        if (!tab || !tab.id) {
+            return null;
+        }
+
+        const scoreData = await sendTabMessageWithRetry(tab.id, { type: 'EXTRACT_QUIZ_SCORE' });
+        if (!scoreData || scoreData.found !== true) {
+            return null;
+        }
+
+        const score = Number(scoreData.score);
+        if (Number.isNaN(score) || score < 0 || score > 10) {
+            return null;
+        }
+
+        return score;
     }
 });

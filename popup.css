@@ -13,12 +13,13 @@ body {
   background-color: var(--bg-dark);
   color: var(--text-main);
   margin: 0;
-  width: 320px;
-  overflow: hidden;
+  width: 380px;
+  min-height: 560px;
+  overflow: auto;
 }
 
 .container {
-  padding: 20px;
+  padding: 16px;
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
 }
 
@@ -293,8 +294,10 @@ footer p {
 
 .tab-content {
   display: none;
-  max-height: calc(100vh - 300px);
+  max-height: 360px;
+  min-height: 280px;
   overflow-y: auto;
+  padding-right: 4px;
 }
 
 .tab-content.active {

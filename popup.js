@@ -63,12 +63,17 @@ document.addEventListener('DOMContentLoaded', () => {
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             const tabName = btn.dataset.tab;
+            const targetTab = document.getElementById(tabName + '-tab');
+
+            if (!targetTab) {
+                return;
+            }
             
             tabBtns.forEach(b => b.classList.remove('active'));
             tabContents.forEach(c => c.classList.remove('active'));
             
             btn.classList.add('active');
-            document.getElementById(tabName + '-tab').classList.add('active');
+            targetTab.classList.add('active');
         });
     });
 

@@ -317,6 +317,11 @@ function initAutoFic() {
 loadConfig();
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'PING') {
+        sendResponse({ ok: true });
+        return true;
+    }
+
     if (msg.type === 'UPDATE_CONFIG') location.reload();
     if (msg.type === 'DOWNLOAD_CHAPTER') {
         // Asegurarnos de que no esté pausado antes de extraer

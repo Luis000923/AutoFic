@@ -215,7 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // Extrae la pregunta actual
-            const questionData = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
+            const questionData = await sendTabMessageWithRetry(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
             if (!questionData || !questionData.question || !Array.isArray(questionData.options) || questionData.options.length < 2) {
                 showError('No se pudo leer la pregunta. Asegúrate de estar en una página de quiz válida.');
                 return;
@@ -265,7 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Aplicar la respuesta en el quiz actual (sin navegar)
                 showStatus('Marcando respuesta correcta...', 'loading');
-                await sendTabMessage(tab.id, {
+                await sendTabMessageWithRetry(tab.id, {
                     type: 'APPLY_QUIZ_ANSWER',
                     answerText: answer.correctAnswer || ''
                 });
@@ -277,7 +277,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 showError('El servidor no encontró una respuesta válida para esta pregunta.');
             }
         } catch (error) {
-            showError(`❌ Error: ${error.message}`);
+            const msg = String(error && error.message ? error.message : error || 'Error desconocido');
+            if (msg.includes('Receiving end does not exist')) {
+                showError('No se pudo conectar con la pestaña. Recarga la página del quiz e intenta de nuevo.');
+            } else {
+                showError(`❌ Error: ${msg}`);
+            }
         } finally {
             solveSingleBtn.disabled = false;
         }
@@ -341,6 +346,44 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 resolve(response);
             });
+        });
+    }
+
+    async function sendTabMessageWithRetry(tabId, msg) {
+        try {
+            return await sendTabMessage(tabId, msg);
+        } catch (error) {
+            const message = String(error && error.message ? error.message : error || '');
+            const canRetry = message.includes('Receiving end does not exist') || message.includes('Could not establish connection');
+
+            if (!canRetry) {
+                throw error;
+            }
+
+            // Recarga la pestaña para que el content script quede activo y reintenta una vez.
+            await reloadTab(tabId);
+            await delay(900);
+            return await sendTabMessage(tabId, msg);
+        }
+    }
+
+    function reloadTab(tabId) {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                chrome.tabs.onUpdated.removeListener(listener);
+                reject(new Error('Timeout recargando pestaña'));
+            }, 15000);
+
+            const listener = (updatedTabId, info) => {
+                if (updatedTabId === tabId && info.status === 'complete') {
+                    clearTimeout(timeout);
+                    chrome.tabs.onUpdated.removeListener(listener);
+                    resolve();
+                }
+            };
+
+            chrome.tabs.onUpdated.addListener(listener);
+            chrome.tabs.reload(tabId);
         });
     }
 

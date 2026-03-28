@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // ===== READER TAB ELEMENTS =====
     const enabledToggle = document.getElementById('enabledToggle');
     const redirectToggle = document.getElementById('redirectToggle');
     const minMinutesInput = document.getElementById('minMinutes');
@@ -11,6 +12,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveBtn = document.getElementById('saveBtn');
     const statusBadge = document.getElementById('statusBadge');
 
+    // ===== QUIZ TAB ELEMENTS =====
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+    const quizUserName = document.getElementById('quizUserName');
+    const quizLevel = document.getElementById('quizLevel');
+    const quizBookName = document.getElementById('quizBookName');
+    const quizChapterName = document.getElementById('quizChapterName');
+    const chapterFile = document.getElementById('chapterFile');
+    const chapterContent = document.getElementById('chapterContent');
+    const questionsText = document.getElementById('questionsText');
+    const questionCount = document.getElementById('questionCount');
+    const processQuizBtn = document.getElementById('processQuizBtn');
+    const processingStatus = document.getElementById('processingStatus');
+
+    // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
         const minInterval = result.minInterval || DEFAULT_CONFIG.minInterval;
         const maxInterval = result.maxInterval || DEFAULT_CONFIG.maxInterval;
@@ -43,6 +59,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ===== TAB SWITCHING =====
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tabName = btn.dataset.tab;
+            
+            tabBtns.forEach(b => b.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            
+            btn.classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+        });
+    });
+
+    // ===== READER TAB LISTENERS =====
     saveBtn.addEventListener('click', () => {
         const minMs = (parseInt(minMinutesInput.value || 0) * 60000) + (parseInt(minSecondsInput.value || 0) * 1000);
         const maxMs = (parseInt(maxMinutesInput.value || 0) * 60000) + (parseInt(maxSecondsInput.value || 0) * 1000);
@@ -116,4 +146,165 @@ document.addEventListener('DOMContentLoaded', () => {
     enabledToggle.addEventListener('change', () => {
         updateBadge(enabledToggle.checked);
     });
+
+    // ===== QUIZ TAB LISTENERS =====
+    chapterFile.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                chapterContent.value = event.target.result;
+            };
+            reader.readAsText(file);
+        }
+    });
+
+    questionsText.addEventListener('input', () => {
+        const questions = parseQuestions(questionsText.value);
+        questionCount.textContent = `Preguntas detectadas: ${questions.length}/10`;
+    });
+
+    processQuizBtn.addEventListener('click', async () => {
+        processingStatus.textContent = '';
+        processingStatus.className = '';
+
+        // Validaciones
+        if (!quizUserName.value.trim()) {
+            showError('Por favor ingresa tu nombre');
+            return;
+        }
+
+        if (!quizLevel.value) {
+            showError('Por favor selecciona un nivel');
+            return;
+        }
+
+        if (!quizBookName.value.trim()) {
+            showError('Por favor ingresa el nombre del libro');
+            return;
+        }
+
+        if (!quizChapterName.value.trim()) {
+            showError('Por favor ingresa el nombre del capítulo');
+            return;
+        }
+
+        if (!chapterContent.value.trim()) {
+            showError('Por favor carga el contenido del capítulo');
+            return;
+        }
+
+        const questions = parseQuestions(questionsText.value);
+        if (questions.length < 10) {
+            showError(`Se requieren 10 preguntas. Detectadas: ${questions.length}`);
+            return;
+        }
+
+        // Procesar
+        await sendToBackend(questions);
+    });
+
+    function parseQuestions(text) {
+        const questions = [];
+        const lines = text.split('\n');
+        let currentQuestion = null;
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+
+            // Detectar nueva pregunta (número al inicio seguido de punto)
+            const questionMatch = trimmed.match(/^(\d+)\.\s*(.+)/);
+            if (questionMatch) {
+                if (currentQuestion) {
+                    questions.push(currentQuestion);
+                }
+                currentQuestion = {
+                    question: questionMatch[2],
+                    options: []
+                };
+                continue;
+            }
+
+            if (!currentQuestion) continue;
+
+            // Detectar opciones (a), b), c), d) o - Opción)
+            const optionMatch = trimmed.match(/^[a-d]\)\s*(.+)|^[-•]\s*(.+)/);
+            if (optionMatch) {
+                const option = optionMatch[1] || optionMatch[2];
+                if (option) {
+                    currentQuestion.options.push(option);
+                }
+            }
+        }
+
+        if (currentQuestion && currentQuestion.options.length > 0) {
+            questions.push(currentQuestion);
+        }
+
+        return questions;
+    }
+
+    async function sendToBackend(questions) {
+        processQuizBtn.disabled = true;
+        showStatus('Procesando...', 'loading');
+
+        try {
+            const payload = {
+                userName: quizUserName.value.trim(),
+                bookId: 0,
+                chapterId: 0,
+                level: parseInt(quizLevel.value),
+                bookName: quizBookName.value.trim(),
+                chapterName: quizChapterName.value.trim(),
+                chapterContent: chapterContent.value.trim(),
+                questions: questions
+            };
+
+            const response = await fetch('https://free-quiz.varios.store/api/quiz-answer', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showSuccess(`✓ Quiz procesado correctamente!\n\nSiguiente paso: Sube el PDF en\nhttps://free-quiz.varios.store/apoyar-con-quiz`);
+                // Limpiar formulario
+                setTimeout(() => {
+                    quizUserName.value = '';
+                    quizLevel.value = '';
+                    quizBookName.value = '';
+                    quizChapterName.value = '';
+                    chapterContent.value = '';
+                    questionsText.value = '';
+                    questionCount.textContent = 'Preguntas detectadas: 0/10';
+                }, 2000);
+            } else {
+                showError(result.error || 'Error al procesar el quiz');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showError('Error de conexión con el servidor');
+        } finally {
+            processQuizBtn.disabled = false;
+        }
+    }
+
+    function showError(message) {
+        processingStatus.textContent = '✗ ' + message;
+        processingStatus.className = 'error';
+    }
+
+    function showSuccess(message) {
+        processingStatus.textContent = message;
+        processingStatus.className = 'success';
+    }
+
+    function showStatus(message, type) {
+        processingStatus.textContent = message;
+        processingStatus.className = type;
+    }
 });

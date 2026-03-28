@@ -260,3 +260,138 @@ footer p {
 .youtube-link-btn:active {
   transform: translateY(0);
 }
+
+/* TAB STYLES */
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #334155;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  font-size: 13px;
+}
+
+.tab-btn:hover {
+  color: var(--text-main);
+}
+
+.tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.tab-content {
+  display: none;
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* FORM STYLES */
+.quiz-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form-section {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(51, 65, 85, 0.3);
+}
+
+.form-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: var(--primary);
+}
+
+.input-group select {
+  background: #334155;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  padding: 10px;
+  color: white;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.input-group select:focus {
+  border-color: var(--primary);
+}
+
+textarea {
+  background: #334155;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  padding: 10px;
+  color: white;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  resize: vertical;
+}
+
+textarea:focus {
+  border-color: var(--primary);
+}
+
+.help-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 8px 0;
+}
+
+pre {
+  margin: 0 !important;
+  font-family: 'Courier New', monospace;
+}
+
+#processingStatus {
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+#processingStatus.success {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+#processingStatus.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ff6b6b;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+#processingStatus.loading {
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--primary);
+}
+
+#processQuizBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

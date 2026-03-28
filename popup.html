@@ -15,53 +15,128 @@
       <h1>AutoFic</h1>
       <div class="status-badge" id="statusBadge">Listo</div>
     </header>
-    <div class="control-group">
-      <label class="switch-label">
-        <span>Estado</span>
-        <label class="switch">
-          <input type="checkbox" id="enabledToggle" checked>
-          <span class="slider round"></span>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="reader">Lector</button>
+      <button class="tab-btn" data-tab="quiz">Quiz Creator</button>
+    </div>
+
+    <!-- TAB: READER -->
+    <div id="reader-tab" class="tab-content active">
+      <div class="control-group">
+        <label class="switch-label">
+          <span>Estado</span>
+          <label class="switch">
+            <input type="checkbox" id="enabledToggle" checked>
+            <span class="slider round"></span>
+          </label>
         </label>
-      </label>
-    </div>
-    <div class="control-group">
-      <label class="switch-label">
-        <span>YouTube</span>
-        <label class="switch">
-          <input type="checkbox" id="redirectToggle" checked>
-          <span class="slider round"></span>
+      </div>
+      <div class="control-group">
+        <label class="switch-label">
+          <span>YouTube</span>
+          <label class="switch">
+            <input type="checkbox" id="redirectToggle" checked>
+            <span class="slider round"></span>
+          </label>
         </label>
-      </label>
-    </div>
-    <div class="control-group">
-      <button id="downloadBtn" class="secondary-btn">Descargar Capítulo (.txt)</button>
-    </div>
-    <div class="control-group">
-      <button id="questionsBtn" class="secondary-btn">Preguntas del Capítulo</button>
-    </div>
-    <div class="settings">
-      <div class="input-group">
-        <label>Mínimo Intervalo (Min:Seg)</label>
-        <div class="time-inputs">
-          <input type="number" id="minMinutes" value="1" min="0" placeholder="Min">
-          <span>:</span>
-          <input type="number" id="minSeconds" value="20" min="0" max="59" placeholder="Seg">
+      </div>
+      <div class="control-group">
+        <button id="downloadBtn" class="secondary-btn">Descargar Capítulo (.txt)</button>
+      </div>
+      <div class="control-group">
+        <button id="questionsBtn" class="secondary-btn">Preguntas del Capítulo</button>
+      </div>
+      <div class="settings">
+        <div class="input-group">
+          <label>Mínimo Intervalo (Min:Seg)</label>
+          <div class="time-inputs">
+            <input type="number" id="minMinutes" value="1" min="0" placeholder="Min">
+            <span>:</span>
+            <input type="number" id="minSeconds" value="20" min="0" max="59" placeholder="Seg">
+          </div>
+        </div>
+        <div class="input-group">
+          <label>Máximo Intervalo (Min:Seg)</label>
+          <div class="time-inputs">
+            <input type="number" id="maxMinutes" value="2" min="0" placeholder="Min">
+            <span>:</span>
+            <input type="number" id="maxSeconds" value="20" min="0" max="59" placeholder="Seg">
+          </div>
+        </div>
+        <div class="input-group">
+          <label for="targetDomain">Dominio Objetivo</label>
+          <input type="text" id="targetDomain" placeholder="lat.fictionexpress.com" value="lat.fictionexpress.com">
         </div>
       </div>
-      <div class="input-group">
-        <label>Máximo Intervalo (Min:Seg)</label>
-        <div class="time-inputs">
-          <input type="number" id="maxMinutes" value="2" min="0" placeholder="Min">
-          <span>:</span>
-          <input type="number" id="maxSeconds" value="20" min="0" max="59" placeholder="Seg">
+      <button id="saveBtn" class="primary-btn">Guardar Configuración</button>
+    </div>
+
+    <!-- TAB: QUIZ CREATOR -->
+    <div id="quiz-tab" class="tab-content">
+      <div class="quiz-form">
+        <div class="form-section">
+          <h3>Información del Quiz</h3>
+          
+          <div class="input-group">
+            <label for="quizUserName">Tu nombre</label>
+            <input type="text" id="quizUserName" placeholder="Tu nombre o alias">
+          </div>
+
+          <div class="input-group">
+            <label for="quizLevel">Nivel del libro (1-3)</label>
+            <select id="quizLevel">
+              <option value="">Selecciona nivel...</option>
+              <option value="1">Nivel 1 - Principiante</option>
+              <option value="2">Nivel 2 - Intermedio</option>
+              <option value="3">Nivel 3 - Avanzado</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label for="quizBookName">Nombre del libro</label>
+            <input type="text" id="quizBookName" placeholder="Ej: Tsunami en las Galápagos">
+          </div>
+
+          <div class="input-group">
+            <label for="quizChapterName">Nombre del capítulo</label>
+            <input type="text" id="quizChapterName" placeholder="Ej: El fin de la aventura">
+          </div>
         </div>
-      </div>
-      <div class="input-group">
-        <label for="targetDomain">Dominio Objetivo</label>
-        <input type="text" id="targetDomain" placeholder="lat.fictionexpress.com" value="lat.fictionexpress.com">
+
+        <div class="form-section">
+          <h3>Contenido del Capítulo</h3>
+          <div class="input-group">
+            <label for="chapterFile">Cargar archivo .txt</label>
+            <input type="file" id="chapterFile" accept=".txt" style="padding: 8px;">
+          </div>
+          <p class="help-text">O pega el contenido del capítulo:</p>
+          <textarea id="chapterContent" placeholder="Pega aquí el contenido del capítulo..." style="min-height: 100px;"></textarea>
+        </div>
+
+        <div class="form-section">
+          <h3>Preguntas (Copia y pega 10 preguntas)</h3>
+          <p class="help-text">Formato esperado:</p>
+          <pre style="font-size: 11px; background: #f0f0f0; padding: 8px; border-radius: 4px; overflow-x: auto;">
+1. ¿Pregunta aquí?
+   a) Opción A
+   b) Opción B
+   c) Opción C
+   d) Opción D
+
+2. ¿Otra pregunta?
+   a) Opción A
+   ...</pre>
+          <textarea id="questionsText" placeholder="Pega aquí las 10 preguntas con sus opciones..." style="min-height: 150px;"></textarea>
+          <p id="questionCount" class="help-text">Preguntas detectadas: 0/10</p>
+        </div>
+
+        <button id="processQuizBtn" class="primary-btn" style="width: 100%;">Procesar Quiz</button>
+        <div id="processingStatus" style="margin-top: 10px; text-align: center;"></div>
       </div>
     </div>
-    <button id="saveBtn" class="primary-btn">Guardar Configuración</button>
+
     <footer>
       <p>AutoFic v1.0 • por Hack_version</p>
       <div class="footer-links">
@@ -70,6 +145,7 @@
       </div>
     </footer>
   </div>
+
   <script src="config.js"></script>
   <script src="popup.js"></script>
 </body>

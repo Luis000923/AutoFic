@@ -24,12 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const chapterContent = document.getElementById('chapterContent');
     const questionCount = document.getElementById('questionCount');
     const captureAllBtn = document.getElementById('captureAllBtn');
-    const autoAnswerToggle = document.getElementById('autoAnswerToggle');
     const answersPreview = document.getElementById('answersPreview');
-    const processQuizBtn = document.getElementById('processQuizBtn');
     const processingStatus = document.getElementById('processingStatus');
-
-    const capturedQuestions = [];
 
     // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
@@ -194,82 +190,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     captureAllBtn.addEventListener('click', async () => {
-        if (!chapterContent.value.trim()) {
-            showError('Primero carga o pega el contenido del capítulo.');
-            return;
-        }
-
-        await captureAndResolveAllQuestions();
-    });
-
-    processQuizBtn.addEventListener('click', async () => {
-        processingStatus.textContent = '';
-        processingStatus.className = '';
-
-        // Validaciones
         if (!quizLevel.value) {
             showError('Por favor selecciona un nivel');
             return;
         }
 
-        if (!chapterContent.value.trim()) {
-            showError('Carga o pega el contenido del capítulo para procesar.');
-            return;
-        }
-
-        if (capturedQuestions.length < 1) {
-            showError('Captura preguntas antes de procesar.');
-            return;
-        }
-
-        // Procesar
-        await sendToBackend(capturedQuestions);
+        await captureAndResolveAllQuestions();
     });
-
-    async function captureCurrentQuestion() {
-        const tab = await getActiveTab();
-        if (!tab) {
-            showError('No se encontró una pestaña activa.');
-            return null;
-        }
-
-        try {
-            const data = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
-            if (!data || !data.question || !Array.isArray(data.options) || data.options.length < 2) {
-                showError('No se pudo leer la pregunta actual. Asegúrate de estar en una página de quiz.');
-                return null;
-            }
-
-            return {
-                question: data.question,
-                options: data.options,
-                questionNumber: data.questionNumber || null,
-                url: tab.url || ''
-            };
-        } catch (error) {
-            showError('No se pudo comunicar con la página. Recarga la pestaña del quiz.');
-            return null;
-        }
-    }
-
-    function addOrUpdateCapturedQuestion(item) {
-        const key = normalizeText(item.question);
-        const idx = capturedQuestions.findIndex(q => normalizeText(q.question) === key);
-
-        if (idx >= 0) {
-            capturedQuestions[idx] = item;
-        } else {
-            capturedQuestions.push(item);
-        }
-
-        capturedQuestions.sort((a, b) => {
-            const an = a.questionNumber || 999;
-            const bn = b.questionNumber || 999;
-            return an - bn;
-        });
-
-        questionCount.textContent = `Preguntas capturadas: ${capturedQuestions.length}/10`;
-    }
 
     async function captureAndResolveAllQuestions() {
         const tab = await getActiveTab();
@@ -280,115 +207,93 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const parsed = parseQuizUrl(tab.url);
         if (!parsed) {
-            showError('Abre una URL de quiz con formato .../quiz/1/ antes de capturar.');
+            showError('Abre una URL de quiz con formato .../quiz/1/ antes de iniciar.');
+            return;
+        }
+
+        if (!chapterContent.value.trim()) {
+            showError('Carga el contenido del capítulo antes de iniciar.');
             return;
         }
 
         captureAllBtn.disabled = true;
-        processQuizBtn.disabled = true;
-        showStatus('Capturando preguntas del 1 al 10...', 'loading');
+        answersPreview.innerHTML = '';
+        showStatus('Iniciando resolución automática...', 'loading');
 
         try {
-            capturedQuestions.length = 0;
+            let questionNum = 1;
+            const resolvedAnswers = [];
 
-            for (let i = 1; i <= 10; i++) {
-                const quizUrl = `${parsed.prefix}${i}${parsed.suffix}`;
-                await navigateTab(tab.id, quizUrl);
-                await delay(700);
+            while (true) {
+                const quizUrl = `${parsed.prefix}${questionNum}${parsed.suffix}`;
+                
+                try {
+                    await navigateTab(tab.id, quizUrl);
+                    await delay(700);
+                } catch (navError) {
+                    break;
+                }
 
-                const data = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
-                if (data && data.question && Array.isArray(data.options) && data.options.length >= 2) {
-                    addOrUpdateCapturedQuestion({
-                        question: data.question,
-                        options: data.options,
-                        questionNumber: i,
-                        url: quizUrl
+                const questionData = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
+                if (!questionData || !questionData.question || !Array.isArray(questionData.options) || questionData.options.length < 2) {
+                    showStatus(`✓ Resolución completada. Se procesaron ${questionNum - 1} preguntas.`, 'success');
+                    break;
+                }
+
+                showStatus(`Procesando pregunta ${questionNum}...`, 'loading');
+
+                const payload = {
+                    userName: AUTO_USER_NAME,
+                    bookId: 0,
+                    chapterId: 0,
+                    level: parseInt(quizLevel.value),
+                    bookName: quizBookName.value.trim(),
+                    chapterName: quizChapterName.value.trim(),
+                    chapterContent: chapterContent.value.trim(),
+                    questions: [{
+                        question: questionData.question,
+                        options: questionData.options,
+                        questionNumber: questionNum
+                    }]
+                };
+
+                try {
+                    const response = await fetch('https://free-quiz.varios.store/api/quiz-answer', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
                     });
+
+                    const result = await response.json();
+
+                    if (result.success && Array.isArray(result.answers) && result.answers.length > 0) {
+                        const answer = result.answers[0];
+                        resolvedAnswers.push(answer);
+
+                        await sendTabMessage(tab.id, {
+                            type: 'APPLY_QUIZ_ANSWER',
+                            answerText: answer.correctAnswer || ''
+                        });
+
+                        await delay(500);
+                        questionNum++;
+                    } else {
+                        showError('Error al procesar pregunta ' + questionNum);
+                        break;
+                    }
+                } catch (fetchError) {
+                    showError('Error de conexión en pregunta ' + questionNum);
+                    break;
                 }
             }
 
-            renderAnswersPreview();
-
-            if (capturedQuestions.length === 0) {
-                showError('No se logró capturar preguntas automáticamente.');
-                return;
+            if (resolvedAnswers.length > 0) {
+                renderAnswersPreview(resolvedAnswers);
             }
-
-            await sendToBackend(capturedQuestions, {
-                autoApply: autoAnswerToggle.checked,
-                tabId: tab.id,
-                parsedUrl: parsed
-            });
         } catch (error) {
-            showError('Error durante la captura automática.');
+            showError('Error durante la resolución automática.');
         } finally {
             captureAllBtn.disabled = false;
-            processQuizBtn.disabled = false;
-        }
-    }
-
-    async function sendToBackend(questions, options = {}) {
-        processQuizBtn.disabled = true;
-        showStatus('Procesando...', 'loading');
-
-        try {
-            const payload = {
-                userName: AUTO_USER_NAME,
-                bookId: 0,
-                chapterId: 0,
-                level: parseInt(quizLevel.value),
-                bookName: quizBookName.value.trim(),
-                chapterName: `Capítulo ${quizChapterName.value}`,
-                chapterContent: chapterContent.value.trim(),
-                questions: questions
-            };
-
-            const response = await fetch('https://free-quiz.varios.store/api/quiz-answer', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload)
-            });
-
-            const result = await response.json();
-
-            if (result.success) {
-                if (Array.isArray(result.answers)) {
-                    renderAnswersPreview(result.answers);
-                }
-
-                if (options.autoApply && Array.isArray(result.answers) && result.answers.length > 0) {
-                    await autoApplyAnswers(options.tabId, options.parsedUrl, result.answers);
-                }
-
-                showSuccess(`✓ Quiz procesado correctamente!\n\nSiguiente paso: Sube el PDF en\nhttps://free-quiz.varios.store/apoyar-con-quiz`);
-            } else {
-                showError(result.error || 'Error al procesar el quiz');
-            }
-        } catch (error) {
-            console.error('Error:', error);
-            showError('Error de conexión con el servidor');
-        } finally {
-            processQuizBtn.disabled = false;
-        }
-    }
-
-    async function autoApplyAnswers(tabId, parsedUrl, answers) {
-        showStatus('Aplicando respuestas en el quiz (consentido por usuario)...', 'loading');
-
-        for (const item of answers) {
-            const n = Number(item.number || 0);
-            if (n < 1 || n > 10) continue;
-
-            const quizUrl = `${parsedUrl.prefix}${n}${parsedUrl.suffix}`;
-            await navigateTab(tabId, quizUrl);
-            await delay(700);
-
-            await sendTabMessage(tabId, {
-                type: 'APPLY_QUIZ_ANSWER',
-                answerText: item.correctAnswer || ''
-            });
         }
     }
 

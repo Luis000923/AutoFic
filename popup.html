@@ -107,29 +107,20 @@
             <input type="file" id="chapterFile" accept=".txt" style="padding: 8px;">
           </div>
           <p class="help-text">O pega el contenido del capítulo:</p>
-          <textarea id="chapterContent" placeholder="Pega aquí el contenido del capítulo..." style="min-height: 100px;"></textarea>
+          <textarea id="chapterContent" placeholder="Pega aquí el contenido del capítulo..." style="min-height: 100px; display: none;"></textarea>
         </div>
 
         <div class="form-section">
           <h3>Resolver Quiz (automático)</h3>
 
           <div class="control-group">
-            <button id="captureAllBtn" class="secondary-btn">Resolver y mostrar 10 respuestas</button>
+            <button id="captureAllBtn" class="secondary-btn">Iniciar resolución automática</button>
           </div>
-
-          <label class="switch-label" style="margin-top: 8px;">
-            <span>Auto contestar (con consentimiento)</span>
-            <label class="switch">
-              <input type="checkbox" id="autoAnswerToggle">
-              <span class="slider round"></span>
-            </label>
-          </label>
 
           <p id="questionCount" class="help-text">Estado: listo</p>
           <div id="answersPreview" class="answers-preview"></div>
         </div>
 
-        <button id="processQuizBtn" class="primary-btn" style="width: 100%;">Procesar Quiz</button>
         <div id="processingStatus" style="margin-top: 10px; text-align: center;"></div>
       </div>
     </div>

@@ -316,7 +316,7 @@ function initAutoFic() {
 
 loadConfig();
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'UPDATE_CONFIG') location.reload();
     if (msg.type === 'DOWNLOAD_CHAPTER') {
         // Asegurarnos de que no esté pausado antes de extraer
@@ -330,7 +330,128 @@ chrome.runtime.onMessage.addListener((msg) => {
             showQuestionsPanel(content);
         });
     }
+
+    if (msg.type === 'EXTRACT_QUIZ_QUESTION') {
+        sendResponse(extractQuizQuestion());
+        return true;
+    }
+
+    if (msg.type === 'APPLY_QUIZ_ANSWER') {
+        sendResponse({ ok: applyQuizAnswer(msg.answerText || '') });
+        return true;
+    }
 });
+
+function extractQuizQuestion() {
+    const quizRoot = document.querySelector('#quiz') || document;
+    const questionEl = quizRoot.querySelector('h3.larga, h3, .pregunta, .question, [class*="pregunta"]');
+
+    if (!questionEl) {
+        return null;
+    }
+
+    const question = cleanText(questionEl.textContent || '');
+    const form = quizRoot.querySelector('form.btnC.casillas, form[data-tipo="formSimple"], form');
+    const scope = form || quizRoot;
+
+    const candidates = Array.from(scope.querySelectorAll('label, li, button, .opcion, .option, p, div, span'));
+    const options = [];
+
+    for (const el of candidates) {
+        const text = cleanText(el.textContent || '');
+        if (!text || text.length < 4 || text.length > 180) continue;
+        if (text === question) continue;
+        if (text.toLowerCase().includes('recuerda que')) continue;
+        if (!options.includes(text)) {
+            options.push(text);
+        }
+    }
+
+    const filtered = options.filter(opt => !isMostlyNumber(opt)).slice(0, 6);
+    const urlMatch = window.location.href.match(/\/quiz\/(\d+)\//i);
+
+    return {
+        question,
+        options: filtered,
+        questionNumber: urlMatch ? parseInt(urlMatch[1], 10) : null,
+    };
+}
+
+function applyQuizAnswer(answerText) {
+    const target = normalizeText(answerText);
+    if (!target) return false;
+
+    const quizRoot = document.querySelector('#quiz') || document;
+    const form = quizRoot.querySelector('form.btnC.casillas, form[data-tipo="formSimple"], form');
+    const scope = form || quizRoot;
+    const options = Array.from(scope.querySelectorAll('label, li, button, .opcion, .option, p, div, span, input[type="radio"], input[type="checkbox"]'));
+
+    let bestEl = null;
+    let bestScore = 0;
+
+    for (const el of options) {
+        const text = cleanText(el.textContent || el.getAttribute('value') || '');
+        if (!text) continue;
+
+        const score = textSimilarity(normalizeText(text), target);
+        if (score > bestScore) {
+            bestScore = score;
+            bestEl = el;
+        }
+    }
+
+    if (!bestEl || bestScore < 0.35) {
+        return false;
+    }
+
+    const clickable = bestEl.closest('label, button, li, div') || bestEl;
+    clickable.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    try {
+        clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        if (clickable instanceof HTMLInputElement) {
+            clickable.checked = true;
+            clickable.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function textSimilarity(a, b) {
+    if (!a || !b) return 0;
+    const wa = a.split(' ').filter(Boolean);
+    const wb = b.split(' ').filter(Boolean);
+    if (!wa.length || !wb.length) return 0;
+
+    let matches = 0;
+    for (const w of wa) {
+        if (wb.includes(w)) matches++;
+    }
+    return matches / Math.max(wa.length, wb.length);
+}
+
+function normalizeText(t) {
+    return (t || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function cleanText(t) {
+    return (t || '').replace(/\s+/g, ' ').trim();
+}
+
+function isMostlyNumber(t) {
+    const clean = (t || '').replace(/\s+/g, '');
+    if (!clean) return true;
+    const digits = (clean.match(/[0-9]/g) || []).length;
+    return digits > clean.length * 0.6;
+}
 
 async function extractAndDownload() {
     try {

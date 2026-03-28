@@ -5,7 +5,8 @@
   "description": "Automatiza la navegación de un lector web sin interferir con métricas.",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "action": {
     "default_popup": "popup.html"

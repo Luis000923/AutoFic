@@ -22,10 +22,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const quizChapterName = document.getElementById('quizChapterName');
     const chapterFile = document.getElementById('chapterFile');
     const chapterContent = document.getElementById('chapterContent');
-    const questionsText = document.getElementById('questionsText');
     const questionCount = document.getElementById('questionCount');
+    const captureCurrentBtn = document.getElementById('captureCurrentBtn');
+    const captureAllBtn = document.getElementById('captureAllBtn');
+    const autoAnswerToggle = document.getElementById('autoAnswerToggle');
+    const answersPreview = document.getElementById('answersPreview');
     const processQuizBtn = document.getElementById('processQuizBtn');
     const processingStatus = document.getElementById('processingStatus');
+
+    const capturedQuestions = [];
 
     // ===== READER TAB INITIALIZATION =====
     chrome.storage.local.get(['minInterval', 'maxInterval', 'targetDomain', 'enabled', 'redirectEnabled'], (result) => {
@@ -165,9 +170,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    questionsText.addEventListener('input', () => {
-        const questions = parseQuestions(questionsText.value);
-        questionCount.textContent = `Preguntas detectadas: ${questions.length}/10`;
+    captureCurrentBtn.addEventListener('click', async () => {
+        const current = await captureCurrentQuestion();
+        if (!current) return;
+        addOrUpdateCapturedQuestion(current);
+        renderAnswersPreview();
+        showStatus('Pregunta actual capturada.', 'loading');
+    });
+
+    captureAllBtn.addEventListener('click', async () => {
+        if (!chapterContent.value.trim()) {
+            showError('Primero carga o pega el contenido del capítulo.');
+            return;
+        }
+
+        await captureAndResolveAllQuestions();
     });
 
     processQuizBtn.addEventListener('click', async () => {
@@ -195,57 +212,117 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const questions = parseQuestions(questionsText.value);
-        if (questions.length < 10) {
-            showError(`Se requieren 10 preguntas. Detectadas: ${questions.length}`);
+        if (capturedQuestions.length < 1) {
+            showError('Captura al menos una pregunta antes de procesar.');
             return;
         }
 
         // Procesar
-        await sendToBackend(questions);
+        await sendToBackend(capturedQuestions);
     });
 
-    function parseQuestions(text) {
-        const questions = [];
-        const lines = text.split('\n');
-        let currentQuestion = null;
-
-        for (const line of lines) {
-            const trimmed = line.trim();
-
-            // Detectar nueva pregunta (número al inicio seguido de punto)
-            const questionMatch = trimmed.match(/^(\d+)\.\s*(.+)/);
-            if (questionMatch) {
-                if (currentQuestion) {
-                    questions.push(currentQuestion);
-                }
-                currentQuestion = {
-                    question: questionMatch[2],
-                    options: []
-                };
-                continue;
-            }
-
-            if (!currentQuestion) continue;
-
-            // Detectar opciones (a), b), c), d) o - Opción)
-            const optionMatch = trimmed.match(/^[a-d]\)\s*(.+)|^[-•]\s*(.+)/);
-            if (optionMatch) {
-                const option = optionMatch[1] || optionMatch[2];
-                if (option) {
-                    currentQuestion.options.push(option);
-                }
-            }
+    async function captureCurrentQuestion() {
+        const tab = await getActiveTab();
+        if (!tab) {
+            showError('No se encontró una pestaña activa.');
+            return null;
         }
 
-        if (currentQuestion && currentQuestion.options.length > 0) {
-            questions.push(currentQuestion);
-        }
+        try {
+            const data = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
+            if (!data || !data.question || !Array.isArray(data.options) || data.options.length < 2) {
+                showError('No se pudo leer la pregunta actual. Asegúrate de estar en una página de quiz.');
+                return null;
+            }
 
-        return questions;
+            return {
+                question: data.question,
+                options: data.options,
+                questionNumber: data.questionNumber || null,
+                url: tab.url || ''
+            };
+        } catch (error) {
+            showError('No se pudo comunicar con la página. Recarga la pestaña del quiz.');
+            return null;
+        }
     }
 
-    async function sendToBackend(questions) {
+    function addOrUpdateCapturedQuestion(item) {
+        const key = normalizeText(item.question);
+        const idx = capturedQuestions.findIndex(q => normalizeText(q.question) === key);
+
+        if (idx >= 0) {
+            capturedQuestions[idx] = item;
+        } else {
+            capturedQuestions.push(item);
+        }
+
+        capturedQuestions.sort((a, b) => {
+            const an = a.questionNumber || 999;
+            const bn = b.questionNumber || 999;
+            return an - bn;
+        });
+
+        questionCount.textContent = `Preguntas capturadas: ${capturedQuestions.length}/10`;
+    }
+
+    async function captureAndResolveAllQuestions() {
+        const tab = await getActiveTab();
+        if (!tab || !tab.url) {
+            showError('No se encontró una pestaña de quiz activa.');
+            return;
+        }
+
+        const parsed = parseQuizUrl(tab.url);
+        if (!parsed) {
+            showError('Abre una URL de quiz con formato .../quiz/1/ antes de capturar.');
+            return;
+        }
+
+        captureAllBtn.disabled = true;
+        processQuizBtn.disabled = true;
+        showStatus('Capturando preguntas del 1 al 10...', 'loading');
+
+        try {
+            capturedQuestions.length = 0;
+
+            for (let i = 1; i <= 10; i++) {
+                const quizUrl = `${parsed.prefix}${i}${parsed.suffix}`;
+                await navigateTab(tab.id, quizUrl);
+                await delay(700);
+
+                const data = await sendTabMessage(tab.id, { type: 'EXTRACT_QUIZ_QUESTION' });
+                if (data && data.question && Array.isArray(data.options) && data.options.length >= 2) {
+                    addOrUpdateCapturedQuestion({
+                        question: data.question,
+                        options: data.options,
+                        questionNumber: i,
+                        url: quizUrl
+                    });
+                }
+            }
+
+            renderAnswersPreview();
+
+            if (capturedQuestions.length === 0) {
+                showError('No se logró capturar preguntas automáticamente.');
+                return;
+            }
+
+            await sendToBackend(capturedQuestions, {
+                autoApply: autoAnswerToggle.checked,
+                tabId: tab.id,
+                parsedUrl: parsed
+            });
+        } catch (error) {
+            showError('Error durante la captura automática.');
+        } finally {
+            captureAllBtn.disabled = false;
+            processQuizBtn.disabled = false;
+        }
+    }
+
+    async function sendToBackend(questions, options = {}) {
         processQuizBtn.disabled = true;
         showStatus('Procesando...', 'loading');
 
@@ -272,16 +349,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
 
             if (result.success) {
+                if (Array.isArray(result.answers)) {
+                    renderAnswersPreview(result.answers);
+                }
+
+                if (options.autoApply && Array.isArray(result.answers) && result.answers.length > 0) {
+                    await autoApplyAnswers(options.tabId, options.parsedUrl, result.answers);
+                }
+
                 showSuccess(`✓ Quiz procesado correctamente!\n\nSiguiente paso: Sube el PDF en\nhttps://free-quiz.varios.store/apoyar-con-quiz`);
-                // Limpiar formulario
-                setTimeout(() => {
-                    quizLevel.value = '';
-                    quizBookName.value = '';
-                    quizChapterName.value = '';
-                    chapterContent.value = '';
-                    questionsText.value = '';
-                    questionCount.textContent = 'Preguntas detectadas: 0/10';
-                }, 2000);
             } else {
                 showError(result.error || 'Error al procesar el quiz');
             }
@@ -291,6 +367,114 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             processQuizBtn.disabled = false;
         }
+    }
+
+    async function autoApplyAnswers(tabId, parsedUrl, answers) {
+        showStatus('Aplicando respuestas en el quiz (consentido por usuario)...', 'loading');
+
+        for (const item of answers) {
+            const n = Number(item.number || 0);
+            if (n < 1 || n > 10) continue;
+
+            const quizUrl = `${parsedUrl.prefix}${n}${parsedUrl.suffix}`;
+            await navigateTab(tabId, quizUrl);
+            await delay(700);
+
+            await sendTabMessage(tabId, {
+                type: 'APPLY_QUIZ_ANSWER',
+                answerText: item.correctAnswer || ''
+            });
+        }
+    }
+
+    function renderAnswersPreview(answers = []) {
+        const items = answers.length > 0 ? answers : capturedQuestions.map((q, i) => ({
+            number: q.questionNumber || (i + 1),
+            question: q.question,
+            correctAnswer: '(pendiente de resolver)'
+        }));
+
+        if (items.length === 0) {
+            answersPreview.innerHTML = '<div class="help-text">Aquí se mostrarán las respuestas correctas por pregunta.</div>';
+            return;
+        }
+
+        answersPreview.innerHTML = items.map(item => {
+            return `<div class="answer-item">
+                <div class="answer-q">${item.number}. ${escapeHtml(item.question || '')}</div>
+                <div class="answer-a">${escapeHtml(item.correctAnswer || '')}</div>
+            </div>`;
+        }).join('');
+    }
+
+    function parseQuizUrl(url) {
+        const match = url.match(/^(.*\/quiz\/)\d+(\/?(?:\?.*)?)$/i);
+        if (!match) return null;
+        return {
+            prefix: match[1],
+            suffix: match[2] || '/'
+        };
+    }
+
+    function normalizeText(text) {
+        return (text || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function escapeHtml(str) {
+        return (str || '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    }
+
+    function getActiveTab() {
+        return new Promise(resolve => {
+            chrome.tabs.query({ active: true, currentWindow: true }, tabs => resolve(tabs[0] || null));
+        });
+    }
+
+    function sendTabMessage(tabId, msg) {
+        return new Promise((resolve, reject) => {
+            chrome.tabs.sendMessage(tabId, msg, response => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                    return;
+                }
+                resolve(response);
+            });
+        });
+    }
+
+    function navigateTab(tabId, url) {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                chrome.tabs.onUpdated.removeListener(listener);
+                reject(new Error('Timeout de navegación'));
+            }, 15000);
+
+            const listener = (updatedTabId, info) => {
+                if (updatedTabId === tabId && info.status === 'complete') {
+                    clearTimeout(timeout);
+                    chrome.tabs.onUpdated.removeListener(listener);
+                    resolve();
+                }
+            };
+
+            chrome.tabs.onUpdated.addListener(listener);
+            chrome.tabs.update(tabId, { url });
+        });
+    }
+
+    function delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     function showError(message) {

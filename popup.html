@@ -118,20 +118,24 @@
         </div>
 
         <div class="form-section">
-          <h3>Preguntas (Copia y pega 10 preguntas)</h3>
-          <p class="help-text">Formato esperado:</p>
-          <pre style="font-size: 11px; background: #f0f0f0; padding: 8px; border-radius: 4px; overflow-x: auto;">
-1. ¿Pregunta aquí?
-   a) Opción A
-   b) Opción B
-   c) Opción C
-   d) Opción D
+          <h3>Preguntas del Quiz (automático)</h3>
+          <p class="help-text">La extensión lee la pregunta y opciones desde la página de quiz actual.</p>
 
-2. ¿Otra pregunta?
-   a) Opción A
-   ...</pre>
-          <textarea id="questionsText" placeholder="Pega aquí las 10 preguntas con sus opciones..." style="min-height: 150px;"></textarea>
-          <p id="questionCount" class="help-text">Preguntas detectadas: 0/10</p>
+          <div class="control-group">
+            <button id="captureCurrentBtn" class="secondary-btn">Capturar pregunta actual</button>
+            <button id="captureAllBtn" class="secondary-btn">Capturar y resolver 10 preguntas</button>
+          </div>
+
+          <label class="switch-label" style="margin-top: 8px;">
+            <span>Auto contestar (con consentimiento)</span>
+            <label class="switch">
+              <input type="checkbox" id="autoAnswerToggle">
+              <span class="slider round"></span>
+            </label>
+          </label>
+
+          <p id="questionCount" class="help-text">Preguntas capturadas: 0/10</p>
+          <div id="answersPreview" class="answers-preview"></div>
         </div>
 
         <button id="processQuizBtn" class="primary-btn" style="width: 100%;">Procesar Quiz</button>

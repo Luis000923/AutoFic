@@ -453,6 +453,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function resolveQuestionWithApi(questionData, questionNum) {
+        const sanitizedOptions = [];
+        const seen = new Set();
+        for (const rawOption of (questionData.options || [])) {
+            const option = String(rawOption || '').replace(/\s+/g, ' ').trim();
+            if (option.length < 3) continue;
+
+            const key = normalizeText(option);
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            sanitizedOptions.push(option);
+
+            if (sanitizedOptions.length === 3) break;
+        }
+
+        if (sanitizedOptions.length < 3) {
+            throw new Error('No se pudieron leer 3 opciones válidas del quiz en esta página.');
+        }
+
         const payload = {
             userName: AUTO_USER_NAME,
             bookId: 0,
@@ -463,7 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chapterContent: chapterContent.value.trim(),
             questions: [{
                 question: questionData.question,
-                options: (questionData.options || []).slice(0, 3),
+                options: sanitizedOptions,
                 questionNumber: questionNum
             }]
         };

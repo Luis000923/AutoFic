@@ -369,20 +369,59 @@ function extractQuizQuestion() {
     const form = quizRoot.querySelector('form.btnC.casillas, form[data-tipo="formSimple"], form');
     const scope = form || quizRoot;
 
-    const candidates = Array.from(scope.querySelectorAll('label, li, button, .opcion, .option, p, div, span'));
     const options = [];
+    const seen = new Set();
 
-    for (const el of candidates) {
-        const text = cleanText(el.textContent || '');
-        if (!text || text.length < 4 || text.length > 180) continue;
-        if (text === question) continue;
-        if (text.toLowerCase().includes('recuerda que')) continue;
-        if (!options.includes(text)) {
-            options.push(text);
+    // Prioridad 1: extraer opciones ligadas a radio/checkbox reales del formulario.
+    const inputs = Array.from(scope.querySelectorAll('input[type="radio"], input[type="checkbox"]'));
+    for (const input of inputs) {
+        let raw = '';
+
+        const labelByParent = input.closest('label');
+        if (labelByParent) {
+            raw = cleanText(labelByParent.textContent || '');
+        }
+
+        if (!raw && input.id) {
+            const labelByFor = scope.querySelector(`label[for="${input.id}"]`);
+            if (labelByFor) {
+                raw = cleanText(labelByFor.textContent || '');
+            }
+        }
+
+        if (!raw) {
+            const fallbackContainer = input.closest('li, .opcion, .option, div, p, span');
+            if (fallbackContainer) {
+                raw = cleanText(fallbackContainer.textContent || '');
+            }
+        }
+
+        const optionText = sanitizeOptionText(raw);
+        if (!isLikelyQuizOption(optionText, question)) continue;
+
+        const norm = normalizeText(optionText);
+        if (!norm || seen.has(norm)) continue;
+        seen.add(norm);
+        options.push(optionText);
+    }
+
+    // Prioridad 2: fallback controlado por si el markup del quiz es distinto.
+    if (options.length < 2) {
+        const candidates = Array.from(scope.querySelectorAll('label, li, .opcion, .option, button, p, div, span'));
+        for (const el of candidates) {
+            const optionText = sanitizeOptionText(cleanText(el.textContent || ''));
+            if (!isLikelyQuizOption(optionText, question)) continue;
+
+            const norm = normalizeText(optionText);
+            if (!norm || seen.has(norm)) continue;
+            seen.add(norm);
+            options.push(optionText);
+
+            if (options.length >= 6) break;
         }
     }
 
-    const filtered = options.filter(opt => !isMostlyNumber(opt)).slice(0, 6);
+    const filtered = options.filter(opt => !isMostlyNumber(opt)).slice(0, 3);
     const urlMatch = window.location.href.match(/\/quiz\/(\d+)\//i);
 
     return {
@@ -538,6 +577,35 @@ function normalizeText(t) {
 
 function cleanText(t) {
     return (t || '').replace(/\s+/g, ' ').trim();
+}
+
+function sanitizeOptionText(t) {
+    return cleanText((t || '').replace(/^[a-c]\s*[\)\].:-]?\s*/i, ''));
+}
+
+function isLikelyQuizOption(text, question) {
+    if (!text) return false;
+    if (text.length < 3 || text.length > 180) return false;
+
+    const lower = text.toLowerCase();
+    const blocked = [
+        'recuerda que',
+        'volver a leer',
+        'nivel',
+        'capitulo',
+        'estado',
+        'terminar y subir',
+        'limpiar preguntas',
+        'ver youtube',
+        'ver github',
+        'autofic',
+    ];
+
+    if (blocked.some(token => lower.includes(token))) return false;
+
+    if (question && normalizeText(text) === normalizeText(question)) return false;
+
+    return true;
 }
 
 function isMostlyNumber(t) {

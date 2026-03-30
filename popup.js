@@ -334,7 +334,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 showSuccess(`✓ Respuesta marcada: ${answer.correctAnswer}\n\nPuedes continuar al siguiente quiz o usar el botón nuevamente.`);
             } else {
-                showError('El servidor no encontró una respuesta válida para esta pregunta.');
+                const fallback = chooseLocalFallbackAnswer(questionData, chapterContent.value.trim());
+                if (fallback) {
+                    await sendTabMessageWithRetry(tab.id, {
+                        type: 'APPLY_QUIZ_ANSWER',
+                        answerText: fallback.correctAnswer,
+                        goNext: false
+                    });
+
+                    mergeAndRenderAnswers([fallback]);
+                    questionCount.textContent = `Estado: resueltas ${resolvedAnswers.length}`;
+                    showSuccess(`✓ Respuesta marcada (fallback local): ${fallback.correctAnswer}`);
+                } else {
+                    showError('El servidor no encontró una respuesta válida para esta pregunta.');
+                }
             }
         } catch (error) {
             const msg = String(error && error.message ? error.message : error || 'Error desconocido');
@@ -386,11 +399,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 showStatus(`Resolviendo pregunta ${i}...`, 'loading');
                 const result = await resolveQuestionWithApi(questionData, i);
 
-                if (!result.success || !Array.isArray(result.answers) || result.answers.length < 1) {
+                let answer = null;
+                if (result.success && Array.isArray(result.answers) && result.answers.length > 0) {
+                    answer = result.answers[0];
+                } else {
+                    answer = chooseLocalFallbackAnswer(questionData, chapterContent.value.trim());
+                }
+
+                if (!answer) {
                     break;
                 }
 
-                const answer = result.answers[0];
                 await sendTabMessageWithRetry(tab.id, {
                     type: 'APPLY_QUIZ_ANSWER',
                     answerText: answer.correctAnswer || '',
@@ -844,6 +863,66 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/[^a-z0-9\s]/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    function chooseLocalFallbackAnswer(questionData, chapterText) {
+        const options = Array.isArray(questionData && questionData.options) ? questionData.options : [];
+        if (!options.length || !chapterText) return null;
+
+        const normalizedChapter = normalizeText(chapterText);
+        const question = String(questionData && questionData.question ? questionData.question : '');
+        const questionTokens = normalizeText(question).split(' ').filter(w => w.length > 3);
+
+        let bestOption = null;
+        let bestScore = 0;
+
+        for (const raw of options) {
+            const option = String(raw || '').trim();
+            if (!option) continue;
+
+            const optionNorm = normalizeText(option);
+            if (!optionNorm) continue;
+
+            let score = 0;
+            if (normalizedChapter.includes(optionNorm)) {
+                score += 1.0;
+            }
+
+            const optionTokens = optionNorm.split(' ').filter(w => w.length > 2);
+            if (optionTokens.length) {
+                let hits = 0;
+                for (const token of optionTokens) {
+                    if (normalizedChapter.includes(token)) hits++;
+                }
+                score += (hits / optionTokens.length) * 0.6;
+            }
+
+            if (questionTokens.length) {
+                let qHits = 0;
+                for (const token of questionTokens) {
+                    if (normalizedChapter.includes(token)) qHits++;
+                }
+                score += (qHits / questionTokens.length) * 0.2;
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestOption = option;
+            }
+        }
+
+        if (!bestOption || bestScore < 0.28) {
+            return null;
+        }
+
+        return {
+            number: Number(questionData && questionData.questionNumber ? questionData.questionNumber : 1),
+            question,
+            options,
+            correctAnswer: bestOption,
+            confidence: Math.min(0.75, Math.max(0.35, bestScore)),
+            source: 'local_fallback'
+        };
     }
 
     function escapeHtml(str) {

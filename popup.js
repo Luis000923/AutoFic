@@ -472,6 +472,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function resolveQuestionWithApi(questionData, questionNum) {
+        const apiChapterContent = buildApiChapterContent(chapterContent.value.trim(), questionData.question || '');
+
         const sanitizedOptions = [];
         const seen = new Set();
         for (const rawOption of (questionData.options || [])) {
@@ -497,7 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
             level: parseInt(quizLevel.value),
             bookName: quizBookName.value.trim(),
             chapterName: quizChapterName.value.trim(),
-            chapterContent: chapterContent.value.trim(),
+            chapterContent: apiChapterContent,
             questions: [{
                 question: questionData.question,
                 options: sanitizedOptions,
@@ -923,6 +925,61 @@ document.addEventListener('DOMContentLoaded', () => {
             confidence: Math.min(0.75, Math.max(0.35, bestScore)),
             source: 'local_fallback'
         };
+    }
+
+    function buildApiChapterContent(rawChapterText, questionText) {
+        const base = String(rawChapterText || '').trim();
+        if (!base) return '';
+
+        // Corta glosarios/listas de vocabulario frecuentes al final del capítulo.
+        const cutMarkers = [
+            'recordemos algo en orden',
+            'haz clic para continuar',
+        ];
+
+        let cleaned = base;
+        const lowered = normalizeText(base);
+        for (const marker of cutMarkers) {
+            const idx = lowered.indexOf(normalizeText(marker));
+            if (idx > 0) {
+                cleaned = base.slice(0, idx).trim();
+                break;
+            }
+        }
+
+        const maxChars = 18000;
+        if (cleaned.length <= maxChars) {
+            return cleaned;
+        }
+
+        const qTokens = normalizeText(questionText).split(' ').filter(w => w.length > 3);
+        if (!qTokens.length) {
+            return cleaned.slice(0, maxChars);
+        }
+
+        const sentences = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+        if (!sentences.length) {
+            return cleaned.slice(0, maxChars);
+        }
+
+        const ranked = [];
+        for (let i = 0; i < sentences.length; i++) {
+            const sentence = sentences[i];
+            const norm = normalizeText(sentence);
+            let score = 0;
+            for (const tk of qTokens) {
+                if (norm.includes(tk)) score++;
+            }
+            if (score > 0) ranked.push({ i, score, sentence });
+        }
+
+        if (!ranked.length) {
+            return cleaned.slice(0, maxChars);
+        }
+
+        ranked.sort((a, b) => (b.score - a.score) || (a.i - b.i));
+        const top = ranked.slice(0, 28).sort((a, b) => a.i - b.i).map(r => r.sentence).join(' ');
+        return top.length > maxChars ? top.slice(0, maxChars) : top;
     }
 
     function escapeHtml(str) {
